@@ -1,0 +1,95 @@
+using System.Net;
+using ActionGame.Contracts.Protocol;
+using ActionGame.Server;
+
+namespace ActionGame.Tests.Integration;
+
+public sealed class GameServerIntegrationTest
+{
+    [Fact]
+    public async Task TwoClientsObserveAuthoritativeMovementAndLeave()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var serverCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            timeout.Token);
+        using var server = new GameServerHost(IPAddress.Loopback, port: 0);
+        server.Start();
+        var serverTask = server.RunAsync(serverCancellation.Token);
+        HeadlessGameClient? firstClient = null;
+        HeadlessGameClient? secondClient = null;
+
+        try
+        {
+            firstClient = await HeadlessGameClient.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                timeout.Token);
+            var firstJoin = await firstClient.JoinAsync(timeout.Token);
+            Assert.Equal(1, firstJoin.PlayerId);
+
+            secondClient = await HeadlessGameClient.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                timeout.Token);
+            var secondJoin = await secondClient.JoinAsync(timeout.Token);
+            Assert.Equal(2, secondJoin.PlayerId);
+
+            var initialSnapshot = await secondClient.WaitForSnapshotAsync(
+                snapshot => snapshot.Players.Length == 2,
+                timeout.Token);
+            var initialFirstPlayer = Assert.Single(
+                initialSnapshot.Players,
+                player => player.PlayerId == firstJoin.PlayerId);
+
+            await firstClient.SendAsync(
+                GamePacketCodec.EncodeInputCommand(
+                    new InputCommandPacket(1, 1, 0)),
+                timeout.Token);
+            var movedSnapshot = await firstClient.WaitForSnapshotAsync(
+                snapshot => snapshot.Players.Any(
+                    player => player.PlayerId == firstJoin.PlayerId
+                        && player.X > initialFirstPlayer.X),
+                timeout.Token);
+            var movedFirstPlayer = Assert.Single(
+                movedSnapshot.Players,
+                player => player.PlayerId == firstJoin.PlayerId);
+
+            var synchronizedSnapshot = await secondClient.WaitForSnapshotAsync(
+                snapshot => snapshot.Players.Any(
+                    player => player.PlayerId == firstJoin.PlayerId
+                        && player.X >= movedFirstPlayer.X),
+                timeout.Token);
+            var synchronizedFirstPlayer = Assert.Single(
+                synchronizedSnapshot.Players,
+                player => player.PlayerId == firstJoin.PlayerId);
+            Assert.True(synchronizedFirstPlayer.X >= movedFirstPlayer.X);
+
+            await firstClient.SendAsync(
+                GamePacketCodec.EncodeInputCommand(
+                    new InputCommandPacket(2, 0, 0)),
+                timeout.Token);
+            await secondClient.DisposeAsync();
+            secondClient = null;
+
+            var leaveSnapshot = await firstClient.WaitForSnapshotAsync(
+                snapshot => snapshot.Players.Length == 1,
+                timeout.Token);
+            Assert.Equal(firstJoin.PlayerId, leaveSnapshot.Players[0].PlayerId);
+        }
+        finally
+        {
+            if (secondClient is not null)
+            {
+                await secondClient.DisposeAsync();
+            }
+
+            if (firstClient is not null)
+            {
+                await firstClient.DisposeAsync();
+            }
+
+            serverCancellation.Cancel();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+}
