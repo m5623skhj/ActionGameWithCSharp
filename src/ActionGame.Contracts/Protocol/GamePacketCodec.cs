@@ -8,12 +8,16 @@ public static class GamePacketCodec
     private const int JoinAcceptedSize = HeaderSize + sizeof(int);
     private const int JoinRejectedSize = HeaderSize + sizeof(byte);
     private const int InputCommandSize = HeaderSize + sizeof(uint) + 3;
-    private const int WorldSnapshotHeaderSize = HeaderSize + sizeof(long) + sizeof(byte);
+    private const int PlayerCountOffset = HeaderSize + sizeof(long);
+    private const int ArrowCountOffset = PlayerCountOffset + sizeof(byte);
+    private const int WorldSnapshotHeaderSize = ArrowCountOffset + sizeof(byte);
     private const int PlayerFacingOffset = sizeof(int) + (3 * sizeof(float));
     private const int PlayerAttackingOffset = PlayerFacingOffset + sizeof(byte);
     private const int PlayerHealthOffset = PlayerAttackingOffset + sizeof(byte);
     private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
     private const int PlayerSnapshotSize = PlayerDeadOffset + sizeof(byte);
+    private const int ArrowDirectionOffset = (2 * sizeof(int)) + (3 * sizeof(float));
+    private const int ArrowSnapshotSize = ArrowDirectionOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
         InputActionFlags.Attack
         | InputActionFlags.Jump
@@ -127,6 +131,7 @@ public static class GamePacketCodec
     {
         ArgumentNullException.ThrowIfNull(packet);
         ArgumentNullException.ThrowIfNull(packet.Players);
+        ArgumentNullException.ThrowIfNull(packet.Arrows);
         if (packet.ServerTick < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(packet));
@@ -137,13 +142,25 @@ public static class GamePacketCodec
             throw new ArgumentException("A snapshot contains too many players.", nameof(packet));
         }
 
+        if (packet.Arrows.Length > GameProtocol.MaxArrows)
+        {
+            throw new ArgumentException("A snapshot contains too many arrows.", nameof(packet));
+        }
+
         ValidateSnapshots(packet.Players, static message => new ArgumentException(message));
+        ValidateArrows(
+            packet.Arrows,
+            packet.Players,
+            static message => new ArgumentException(message));
 
         var payload = CreateHeader(
             PacketType.WorldSnapshot,
-            WorldSnapshotHeaderSize + (packet.Players.Length * PlayerSnapshotSize));
+            WorldSnapshotHeaderSize
+                + (packet.Players.Length * PlayerSnapshotSize)
+                + (packet.Arrows.Length * ArrowSnapshotSize));
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(HeaderSize), packet.ServerTick);
-        payload[HeaderSize + sizeof(long)] = (byte)packet.Players.Length;
+        payload[PlayerCountOffset] = (byte)packet.Players.Length;
+        payload[ArrowCountOffset] = (byte)packet.Arrows.Length;
 
         var offset = WorldSnapshotHeaderSize;
         foreach (var player in packet.Players)
@@ -169,6 +186,26 @@ public static class GamePacketCodec
             offset += PlayerSnapshotSize;
         }
 
+        foreach (var arrow in packet.Arrows)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(offset), arrow.ArrowId);
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + sizeof(int)),
+                arrow.OwnerPlayerId);
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + (2 * sizeof(int))),
+                BitConverter.SingleToInt32Bits(arrow.X));
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + (2 * sizeof(int)) + sizeof(float)),
+                BitConverter.SingleToInt32Bits(arrow.Y));
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + (2 * sizeof(int)) + (2 * sizeof(float))),
+                BitConverter.SingleToInt32Bits(arrow.Z));
+            payload[offset + ArrowDirectionOffset] =
+                unchecked((byte)(sbyte)arrow.Direction);
+            offset += ArrowSnapshotSize;
+        }
+
         return payload;
     }
 
@@ -190,13 +227,21 @@ public static class GamePacketCodec
             throw new InvalidDataException("Server tick cannot be negative.");
         }
 
-        var playerCount = payload[HeaderSize + sizeof(long)];
+        var playerCount = payload[PlayerCountOffset];
         if (playerCount > GameProtocol.MaxPlayers)
         {
             throw new InvalidDataException("World snapshot contains too many players.");
         }
 
-        var expectedLength = WorldSnapshotHeaderSize + (playerCount * PlayerSnapshotSize);
+        var arrowCount = payload[ArrowCountOffset];
+        if (arrowCount > GameProtocol.MaxArrows)
+        {
+            throw new InvalidDataException("World snapshot contains too many arrows.");
+        }
+
+        var expectedLength = WorldSnapshotHeaderSize
+            + (playerCount * PlayerSnapshotSize)
+            + (arrowCount * ArrowSnapshotSize);
         if (payload.Length != expectedLength)
         {
             throw new InvalidDataException("World snapshot length does not match its player count.");
@@ -243,8 +288,39 @@ public static class GamePacketCodec
             offset += PlayerSnapshotSize;
         }
 
+        var arrows = new ArrowSnapshot[arrowCount];
+        for (var index = 0; index < arrowCount; index++)
+        {
+            var arrowId = BinaryPrimitives.ReadInt32LittleEndian(payload[offset..]);
+            var ownerPlayerId = BinaryPrimitives.ReadInt32LittleEndian(
+                payload[(offset + sizeof(int))..]);
+            var x = BitConverter.Int32BitsToSingle(
+                BinaryPrimitives.ReadInt32LittleEndian(
+                    payload[(offset + (2 * sizeof(int)))..]));
+            var y = BitConverter.Int32BitsToSingle(
+                BinaryPrimitives.ReadInt32LittleEndian(
+                    payload[(offset + (2 * sizeof(int)) + sizeof(float))..]));
+            var z = BitConverter.Int32BitsToSingle(
+                BinaryPrimitives.ReadInt32LittleEndian(
+                    payload[(offset + (2 * sizeof(int)) + (2 * sizeof(float)))..]));
+            var direction = (FacingDirection)unchecked(
+                (sbyte)payload[offset + ArrowDirectionOffset]);
+            arrows[index] = new ArrowSnapshot(
+                arrowId,
+                ownerPlayerId,
+                x,
+                y,
+                z,
+                direction);
+            offset += ArrowSnapshotSize;
+        }
+
         ValidateSnapshots(players, static message => new InvalidDataException(message));
-        return new WorldSnapshotPacket(serverTick, players);
+        ValidateArrows(
+            arrows,
+            players,
+            static message => new InvalidDataException(message));
+        return new WorldSnapshotPacket(serverTick, players, arrows);
     }
 
     public static byte[] EncodeLeaveRequest()
@@ -328,6 +404,55 @@ public static class GamePacketCodec
             if (player.IsDead != (player.Health == 0))
             {
                 throw createException("Player dead state does not match health.");
+            }
+        }
+    }
+
+    private static void ValidateArrows(
+        IReadOnlyList<ArrowSnapshot> arrows,
+        IReadOnlyList<PlayerSnapshot> players,
+        Func<string, Exception> createException)
+    {
+        var arrowIds = new HashSet<int>();
+        var playerIds = players.Select(player => player.PlayerId).ToHashSet();
+        foreach (var arrow in arrows)
+        {
+            if (arrow.ArrowId <= 0)
+            {
+                throw createException($"Invalid arrow id: {arrow.ArrowId}.");
+            }
+
+            if (!arrowIds.Add(arrow.ArrowId))
+            {
+                throw createException($"Duplicate arrow id: {arrow.ArrowId}.");
+            }
+
+            if (!playerIds.Contains(arrow.OwnerPlayerId))
+            {
+                throw createException(
+                    $"Arrow owner is not present: {arrow.OwnerPlayerId}.");
+            }
+
+            if (!float.IsFinite(arrow.X)
+                || !float.IsFinite(arrow.Y)
+                || !float.IsFinite(arrow.Z))
+            {
+                throw createException("Arrow coordinates must be finite.");
+            }
+
+            if (arrow.X < 0f
+                || arrow.X > GameProtocol.WorldWidth
+                || arrow.Y < GameProtocol.FloorTop
+                || arrow.Y > GameProtocol.FloorBottom
+                || arrow.Z < 0f
+                || arrow.Z > GameProtocol.WorldHeight)
+            {
+                throw createException("Arrow coordinates are outside the world.");
+            }
+
+            if (!Enum.IsDefined(arrow.Direction))
+            {
+                throw createException($"Invalid arrow direction: {arrow.Direction}.");
             }
         }
     }

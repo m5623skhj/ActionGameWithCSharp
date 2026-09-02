@@ -5,7 +5,9 @@ namespace ActionGame.Server.Game;
 public sealed class GameWorld
 {
     private readonly Dictionary<long, PlayerState> playersByConnection = [];
+    private readonly List<ArrowState> arrows = [];
     private double serverTimeSeconds;
+    private int nextArrowId = 1;
 
     public int PlayerCount => playersByConnection.Count;
 
@@ -41,7 +43,13 @@ public sealed class GameWorld
 
     public bool Leave(long connectionId)
     {
-        return playersByConnection.Remove(connectionId);
+        if (!playersByConnection.Remove(connectionId, out var player))
+        {
+            return false;
+        }
+
+        arrows.RemoveAll(arrow => arrow.OwnerPlayerId == player.PlayerId);
+        return true;
     }
 
     public bool ApplyInput(long connectionId, InputCommandPacket input)
@@ -200,6 +208,7 @@ public sealed class GameWorld
         }
 
         ResolveAttacks(attackers);
+        UpdateArrows(deltaSeconds);
 
         ServerTick++;
     }
@@ -218,7 +227,17 @@ public sealed class GameWorld
                 player.Health,
                 player.IsDead))
             .ToArray();
-        return new WorldSnapshotPacket(ServerTick, players);
+        var arrowSnapshots = arrows
+            .OrderBy(arrow => arrow.ArrowId)
+            .Select(arrow => new ArrowSnapshot(
+                arrow.ArrowId,
+                arrow.OwnerPlayerId,
+                arrow.X,
+                arrow.Y,
+                arrow.Z,
+                arrow.Direction))
+            .ToArray();
+        return new WorldSnapshotPacket(ServerTick, players, arrowSnapshots);
     }
 
     public bool TryGetPlayer(long connectionId, out PlayerSnapshot player)
@@ -278,6 +297,12 @@ public sealed class GameWorld
         var pendingDamage = new Dictionary<PlayerState, int>();
         foreach (var attacker in attackers)
         {
+            if (attacker.PlayerId == GameProtocol.RangerPlayerId)
+            {
+                SpawnArrow(attacker);
+                continue;
+            }
+
             foreach (var target in playersByConnection.Values)
             {
                 if (ReferenceEquals(attacker, target)
@@ -296,6 +321,116 @@ public sealed class GameWorld
         {
             ApplyDamage(pair.Key, pair.Value);
         }
+    }
+
+    private void SpawnArrow(PlayerState attacker)
+    {
+        if (arrows.Count >= GameProtocol.MaxArrows)
+        {
+            return;
+        }
+
+        var directionMultiplier = attacker.Facing == FacingDirection.Right ? 1f : -1f;
+        arrows.Add(new ArrowState(
+            nextArrowId++,
+            attacker.PlayerId,
+            attacker.X + (directionMultiplier * GameProtocol.PlayerSize / 2f),
+            attacker.Y,
+            attacker.Z + GameProtocol.ArrowSpawnHeight,
+            attacker.Facing));
+    }
+
+    private void UpdateArrows(float deltaSeconds)
+    {
+        for (var index = arrows.Count - 1; index >= 0; index--)
+        {
+            var arrow = arrows[index];
+            var remainingDistance = GameProtocol.ArrowMaxDistance - arrow.DistanceTraveled;
+            if (remainingDistance <= 0f)
+            {
+                arrows.RemoveAt(index);
+                continue;
+            }
+
+            var travelDistance = MathF.Min(
+                GameProtocol.ArrowSpeed * deltaSeconds,
+                remainingDistance);
+            var directionMultiplier = arrow.Direction == FacingDirection.Right ? 1f : -1f;
+            var previousX = arrow.X;
+            var nextX = previousX + (directionMultiplier * travelDistance);
+            var target = FindArrowTarget(arrow, previousX, nextX);
+            if (target is not null)
+            {
+                ApplyDamage(target, GameProtocol.RangerAttackDamage);
+                arrows.RemoveAt(index);
+                continue;
+            }
+
+            arrow.X = nextX;
+            arrow.DistanceTraveled += travelDistance;
+            if (arrow.DistanceTraveled >= GameProtocol.ArrowMaxDistance
+                || arrow.X < 0f
+                || arrow.X > GameProtocol.WorldWidth)
+            {
+                arrows.RemoveAt(index);
+            }
+        }
+    }
+
+    private PlayerState? FindArrowTarget(
+        ArrowState arrow,
+        float previousX,
+        float nextX)
+    {
+        PlayerState? closestTarget = null;
+        var closestDistance = float.MaxValue;
+        foreach (var target in playersByConnection.Values)
+        {
+            if (target.PlayerId == arrow.OwnerPlayerId
+                || target.IsDead
+                || MathF.Abs(target.Y - arrow.Y) > GameProtocol.ArrowDepthTolerance
+                || MathF.Abs(
+                    target.Z + GameProtocol.ArrowSpawnHeight - arrow.Z)
+                    > GameProtocol.ArrowHeightTolerance
+                || !TryGetArrowHitDistance(
+                    previousX,
+                    nextX,
+                    target.X,
+                    out var hitDistance)
+                || hitDistance >= closestDistance)
+            {
+                continue;
+            }
+
+            closestTarget = target;
+            closestDistance = hitDistance;
+        }
+
+        return closestTarget;
+    }
+
+    private static bool TryGetArrowHitDistance(
+        float previousX,
+        float nextX,
+        float targetX,
+        out float hitDistance)
+    {
+        var halfPlayerSize = GameProtocol.PlayerSize / 2f;
+        var targetMinX = targetX - halfPlayerSize;
+        var targetMaxX = targetX + halfPlayerSize;
+        var segmentMinX = MathF.Min(previousX, nextX);
+        var segmentMaxX = MathF.Max(previousX, nextX);
+        if (segmentMaxX < targetMinX || segmentMinX > targetMaxX)
+        {
+            hitDistance = 0f;
+            return false;
+        }
+
+        var hitX = nextX >= previousX
+            ? MathF.Max(previousX, targetMinX)
+            : MathF.Min(previousX, targetMaxX);
+        hitDistance = MathF.Abs(hitX - previousX);
+        return true;
     }
 
     private static bool IsWithinAttackRange(PlayerState attacker, PlayerState target)
@@ -397,5 +532,28 @@ public sealed class GameWorld
         public uint LastInputSequence { get; set; }
 
         public bool HasInput { get; set; }
+    }
+
+    private sealed class ArrowState(
+        int arrowId,
+        int ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        FacingDirection direction)
+    {
+        public int ArrowId { get; } = arrowId;
+
+        public int OwnerPlayerId { get; } = ownerPlayerId;
+
+        public float X { get; set; } = x;
+
+        public float Y { get; } = y;
+
+        public float Z { get; } = z;
+
+        public FacingDirection Direction { get; } = direction;
+
+        public float DistanceTraveled { get; set; }
     }
 }

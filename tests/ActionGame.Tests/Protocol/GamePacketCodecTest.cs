@@ -43,6 +43,15 @@ public sealed class GamePacketCodecTest
                     false,
                     0,
                     true),
+            ],
+            [
+                new ArrowSnapshot(
+                    7,
+                    1,
+                    320f,
+                    200f,
+                    63f,
+                    FacingDirection.Right),
             ]);
 
         var actual = GamePacketCodec.DecodeWorldSnapshot(
@@ -50,6 +59,7 @@ public sealed class GamePacketCodecTest
 
         Assert.Equal(expected.ServerTick, actual.ServerTick);
         Assert.Equal(expected.Players, actual.Players);
+        Assert.Equal(expected.Arrows, actual.Arrows);
     }
 
     [Fact]
@@ -107,7 +117,8 @@ public sealed class GamePacketCodecTest
                     false,
                     GameProtocol.MaxHealth,
                     false),
-            ]);
+            ],
+            []);
 
         Assert.Throws<ArgumentException>(() =>
             GamePacketCodec.EncodeWorldSnapshot(packet));
@@ -128,7 +139,8 @@ public sealed class GamePacketCodecTest
                     false,
                     0,
                     false),
-            ]);
+            ],
+            []);
 
         Assert.Throws<ArgumentException>(() =>
             GamePacketCodec.EncodeWorldSnapshot(packet));

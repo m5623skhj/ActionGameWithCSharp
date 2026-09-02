@@ -14,6 +14,7 @@ public sealed class ActionGameClientGame : Game
     private readonly GameNetworkClient networkClient;
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<int, PlayerSnapshot> players = [];
+    private ArrowSnapshot[] arrows = [];
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
     private LpcCharacterRenderer? characterRenderer;
@@ -119,6 +120,11 @@ public sealed class ActionGameClientGame : Game
             DrawHealthBar(spriteBatch, pixel, player);
         }
 
+        foreach (var arrow in arrows.OrderBy(arrow => arrow.Y))
+        {
+            DrawArrow(spriteBatch, pixel, arrow);
+        }
+
         spriteBatch.End();
         base.Draw(gameTime);
     }
@@ -172,6 +178,7 @@ public sealed class ActionGameClientGame : Game
                 case DisconnectedClientEvent disconnected:
                     localPlayerId = null;
                     players.Clear();
+                    arrows = [];
                     characterRenderer?.Reset();
                     connectionStatus = $"Disconnected: {disconnected.Message}";
                     break;
@@ -195,6 +202,8 @@ public sealed class ActionGameClientGame : Game
         {
             players.Add(player.PlayerId, player);
         }
+
+        arrows = snapshot.Arrows;
     }
 
     private void QueueInput(KeyboardState keyboard, double elapsedSeconds)
@@ -354,5 +363,32 @@ public sealed class ActionGameClientGame : Game
             pixel,
             new Rectangle(x + 1, y + 1, fillWidth, height - 2),
             color);
+    }
+
+    private static void DrawArrow(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        ArrowSnapshot arrow)
+    {
+        const int shaftLength = 16;
+        var tipX = (int)MathF.Round(arrow.X);
+        var y = (int)MathF.Round(arrow.Y - arrow.Z);
+        var isFacingRight = arrow.Direction == FacingDirection.Right;
+        var shaftX = isFacingRight ? tipX - shaftLength : tipX;
+        var tailX = isFacingRight ? shaftX : shaftX + shaftLength - 2;
+        var headX = isFacingRight ? tipX - 3 : tipX;
+
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(shaftX, y, shaftLength, 2),
+            new Color(135, 88, 45));
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(headX, y - 2, 3, 6),
+            new Color(205, 210, 220));
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(tailX, y - 2, 2, 6),
+            new Color(180, 65, 55));
     }
 }

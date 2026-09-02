@@ -253,7 +253,7 @@ public sealed class GameWorldTest
     }
 
     [Fact]
-    public void SimultaneousAttacksDamageBothPlayers()
+    public void MeleeAndRangedAttacksResolveWithDifferentDamageTiming()
     {
         var world = CreateWorldWithPlayersInAttackRange();
         Assert.True(world.ApplyInput(
@@ -267,8 +267,54 @@ public sealed class GameWorldTest
 
         Assert.True(world.TryGetPlayer(10, out var first));
         Assert.True(world.TryGetPlayer(20, out var second));
-        Assert.Equal(GameProtocol.MaxHealth - GameProtocol.AttackDamage, first.Health);
+        Assert.Equal(GameProtocol.MaxHealth, first.Health);
         Assert.Equal(GameProtocol.MaxHealth - GameProtocol.AttackDamage, second.Health);
+        var flyingArrow = Assert.Single(world.CreateSnapshot().Arrows);
+        Assert.Equal(GameProtocol.RangerPlayerId, flyingArrow.OwnerPlayerId);
+        Assert.Equal(FacingDirection.Left, flyingArrow.Direction);
+
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(10, out var arrowTarget));
+        Assert.Equal(
+            GameProtocol.MaxHealth - GameProtocol.RangerAttackDamage,
+            arrowTarget.Health);
+        Assert.Empty(world.CreateSnapshot().Arrows);
+        Assert.True(GameProtocol.RangerAttackDamage < GameProtocol.AttackDamage);
+    }
+
+    [Fact]
+    public void ArrowThatMissesDisappearsAfterMaximumDistance()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 1, InputActionFlags.None)));
+        for (var index = 0; index < 5; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+        Assert.Single(world.CreateSnapshot().Arrows);
+
+        var maximumFlightTicks = (int)MathF.Ceiling(
+            GameProtocol.ArrowMaxDistance
+                / (GameProtocol.ArrowSpeed * TickSeconds));
+        for (var index = 1; index < maximumFlightTicks; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(10, out var missedTarget));
+        Assert.Equal(GameProtocol.MaxHealth, missedTarget.Health);
+        Assert.Empty(world.CreateSnapshot().Arrows);
     }
 
     [Fact]

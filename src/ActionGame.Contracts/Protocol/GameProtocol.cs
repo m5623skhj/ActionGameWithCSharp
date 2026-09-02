@@ -2,8 +2,10 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 4;
+    public const byte Version = 5;
     public const int MaxPlayers = 2;
+    public const int RangerPlayerId = 2;
+    public const int MaxArrows = 16;
     public const float WorldWidth = 800f;
     public const float WorldHeight = 450f;
     public const float PlayerSize = 28f;
@@ -20,6 +22,12 @@ public static class GameProtocol
     public const float AttackHeightTolerance = 48f;
     public const int MaxHealth = 100;
     public const int AttackDamage = 20;
+    public const int RangerAttackDamage = 15;
+    public const float ArrowSpeed = 480f;
+    public const float ArrowMaxDistance = 360f;
+    public const float ArrowSpawnHeight = 28f;
+    public const float ArrowDepthTolerance = 18f;
+    public const float ArrowHeightTolerance = 32f;
     public const float ReviveDelaySeconds = 5f;
     public const int SimulationRate = 20;
     public const int DefaultPort = 7777;
@@ -77,4 +85,15 @@ public readonly record struct PlayerSnapshot(
     int Health,
     bool IsDead);
 
-public sealed record WorldSnapshotPacket(long ServerTick, PlayerSnapshot[] Players);
+public readonly record struct ArrowSnapshot(
+    int ArrowId,
+    int OwnerPlayerId,
+    float X,
+    float Y,
+    float Z,
+    FacingDirection Direction);
+
+public sealed record WorldSnapshotPacket(
+    long ServerTick,
+    PlayerSnapshot[] Players,
+    ArrowSnapshot[] Arrows);
