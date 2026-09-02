@@ -11,7 +11,7 @@ public sealed class GamePacketCodecTest
             42,
             -1,
             1,
-            InputActionFlags.Attack | InputActionFlags.ReservedZ);
+            InputActionFlags.Revive | InputActionFlags.ReservedZ);
 
         var actual = GamePacketCodec.DecodeInputCommand(
             GamePacketCodec.EncodeInputCommand(expected));

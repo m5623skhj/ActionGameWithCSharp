@@ -15,7 +15,10 @@ public static class GamePacketCodec
     private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
     private const int PlayerSnapshotSize = PlayerDeadOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
-        InputActionFlags.Attack | InputActionFlags.Jump | InputActionFlags.ReservedZ;
+        InputActionFlags.Attack
+        | InputActionFlags.Jump
+        | InputActionFlags.ReservedZ
+        | InputActionFlags.Revive;
 
     public static PacketType ReadPacketType(ReadOnlySpan<byte> payload)
     {

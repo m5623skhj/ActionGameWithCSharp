@@ -211,19 +211,31 @@ public sealed class ActionGameClientGame : Game
         while (inputAccumulator >= inputInterval)
         {
             inputAccumulator -= inputInterval;
-            var horizontal = GetAxis(
-                keyboard.IsKeyDown(Keys.Left),
-                keyboard.IsKeyDown(Keys.Right));
-            var depth = GetAxis(
-                keyboard.IsKeyDown(Keys.Up),
-                keyboard.IsKeyDown(Keys.Down));
-            var actions = pendingActionPresses;
+            var isDead = IsLocalPlayerDead();
+            var horizontal = isDead
+                ? (sbyte)0
+                : GetAxis(
+                    keyboard.IsKeyDown(Keys.Left),
+                    keyboard.IsKeyDown(Keys.Right));
+            var depth = isDead
+                ? (sbyte)0
+                : GetAxis(
+                    keyboard.IsKeyDown(Keys.Up),
+                    keyboard.IsKeyDown(Keys.Down));
+            var allowedActions = isDead
+                ? InputActionFlags.Revive | InputActionFlags.ReservedZ
+                : InputActionFlags.Attack
+                    | InputActionFlags.Jump
+                    | InputActionFlags.ReservedZ;
+            var actions = pendingActionPresses & allowedActions;
             if (keyboard.IsKeyDown(Keys.X))
             {
-                actions |= InputActionFlags.Attack;
+                actions |= isDead
+                    ? InputActionFlags.Revive
+                    : InputActionFlags.Attack;
             }
 
-            if (keyboard.IsKeyDown(Keys.C))
+            if (!isDead && keyboard.IsKeyDown(Keys.C))
             {
                 actions |= InputActionFlags.Jump;
             }
@@ -248,9 +260,24 @@ public sealed class ActionGameClientGame : Game
 
     private void CaptureActionPresses(KeyboardState keyboard)
     {
-        LatchPressedAction(keyboard, Keys.X, InputActionFlags.Attack);
-        LatchPressedAction(keyboard, Keys.C, InputActionFlags.Jump);
+        var isDead = IsLocalPlayerDead();
+        LatchPressedAction(
+            keyboard,
+            Keys.X,
+            isDead ? InputActionFlags.Revive : InputActionFlags.Attack);
+        if (!isDead)
+        {
+            LatchPressedAction(keyboard, Keys.C, InputActionFlags.Jump);
+        }
+
         LatchPressedAction(keyboard, Keys.Z, InputActionFlags.ReservedZ);
+    }
+
+    private bool IsLocalPlayerDead()
+    {
+        return localPlayerId.HasValue
+            && players.TryGetValue(localPlayerId.Value, out var player)
+            && player.IsDead;
     }
 
     private void LatchPressedAction(
@@ -266,7 +293,7 @@ public sealed class ActionGameClientGame : Game
 
     private void UpdateWindowTitle()
     {
-        Window.Title = $"Action Game - {connectionStatus} - Arrows / X / C / Z / Esc";
+        Window.Title = $"Action Game - {connectionStatus} - Arrows / X Attack-Revive / C / Z / Esc";
     }
 
     private static sbyte GetAxis(bool negative, bool positive)

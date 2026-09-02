@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 3;
+    public const byte Version = 4;
     public const int MaxPlayers = 2;
     public const float WorldWidth = 800f;
     public const float WorldHeight = 450f;
@@ -20,6 +20,7 @@ public static class GameProtocol
     public const float AttackHeightTolerance = 48f;
     public const int MaxHealth = 100;
     public const int AttackDamage = 20;
+    public const float ReviveDelaySeconds = 5f;
     public const int SimulationRate = 20;
     public const int DefaultPort = 7777;
 }
@@ -31,6 +32,7 @@ public enum InputActionFlags : byte
     Attack = 1 << 0,
     Jump = 1 << 1,
     ReservedZ = 1 << 2,
+    Revive = 1 << 3,
 }
 
 public enum FacingDirection : sbyte

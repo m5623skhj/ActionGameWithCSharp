@@ -275,31 +275,7 @@ public sealed class GameWorldTest
     public void ZeroHealthMarksPlayerDeadAndIgnoresFurtherInput()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        uint sequence = 3;
-        for (var attackIndex = 0;
-            attackIndex < GameProtocol.MaxHealth / GameProtocol.AttackDamage;
-            attackIndex++)
-        {
-            Assert.True(world.ApplyInput(
-                10,
-                new InputCommandPacket(
-                    sequence++,
-                    0,
-                    0,
-                    InputActionFlags.Attack)));
-            world.Update(TickSeconds);
-            Assert.True(world.ApplyInput(
-                10,
-                new InputCommandPacket(
-                    sequence++,
-                    0,
-                    0,
-                    InputActionFlags.None)));
-            for (var cooldownTick = 0; cooldownTick < 7; cooldownTick++)
-            {
-                world.Update(TickSeconds);
-            }
-        }
+        KillSecondPlayer(world);
 
         Assert.True(world.TryGetPlayer(20, out var dead));
         Assert.Equal(0, dead.Health);
@@ -322,6 +298,111 @@ public sealed class GameWorldTest
         Assert.Equal(0, afterInput.Health);
         Assert.True(afterInput.IsDead);
         Assert.False(afterInput.IsAttacking);
+    }
+
+    [Fact]
+    public void ReviveRequestBeforeDelayIsRejected()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        KillSecondPlayer(world);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Revive)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var player));
+        Assert.Equal(0, player.Health);
+        Assert.True(player.IsDead);
+    }
+
+    [Fact]
+    public void ReviveRequiresNewRequestAfterDelayAndRestoresPlayer()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        KillSecondPlayer(world);
+        Assert.True(world.TryGetPlayer(20, out var dead));
+
+        uint sequence = 3;
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                0,
+                0,
+                InputActionFlags.Revive)));
+        world.Update(TickSeconds);
+
+        var requiredTicks = (int)(
+            GameProtocol.ReviveDelaySeconds * GameProtocol.SimulationRate);
+        for (var index = 0; index < requiredTicks; index++)
+        {
+            Assert.True(world.ApplyInput(
+                20,
+                new InputCommandPacket(
+                    sequence++,
+                    0,
+                    0,
+                    InputActionFlags.Revive)));
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(20, out var stillDead));
+        Assert.True(stillDead.IsDead);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                0,
+                0,
+                InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                0,
+                0,
+                InputActionFlags.Revive)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var revived));
+        Assert.False(revived.IsDead);
+        Assert.Equal(GameProtocol.MaxHealth, revived.Health);
+        Assert.Equal(dead.X, revived.X);
+        Assert.Equal(dead.Y, revived.Y);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                0,
+                0,
+                InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var heldAfterRevive));
+        Assert.False(heldAfterRevive.IsAttacking);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                0,
+                0,
+                InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                sequence++,
+                -1,
+                0,
+                InputActionFlags.Jump)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var active));
+        Assert.True(active.X < revived.X);
+        Assert.True(active.Z > 0f);
     }
 
     [Fact]
@@ -364,5 +445,38 @@ public sealed class GameWorldTest
             new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
         world.Update(TickSeconds);
         return world;
+    }
+
+    private static void KillSecondPlayer(GameWorld world)
+    {
+        uint sequence = 3;
+        var attackCount = GameProtocol.MaxHealth / GameProtocol.AttackDamage;
+        for (var attackIndex = 0; attackIndex < attackCount; attackIndex++)
+        {
+            Assert.True(world.ApplyInput(
+                10,
+                new InputCommandPacket(
+                    sequence++,
+                    0,
+                    0,
+                    InputActionFlags.Attack)));
+            world.Update(TickSeconds);
+            if (attackIndex == attackCount - 1)
+            {
+                continue;
+            }
+
+            Assert.True(world.ApplyInput(
+                10,
+                new InputCommandPacket(
+                    sequence++,
+                    0,
+                    0,
+                    InputActionFlags.None)));
+            for (var cooldownTick = 0; cooldownTick < 7; cooldownTick++)
+            {
+                world.Update(TickSeconds);
+            }
+        }
     }
 }

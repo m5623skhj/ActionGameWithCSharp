@@ -5,6 +5,7 @@ namespace ActionGame.Server.Game;
 public sealed class GameWorld
 {
     private readonly Dictionary<long, PlayerState> playersByConnection = [];
+    private double serverTimeSeconds;
 
     public int PlayerCount => playersByConnection.Count;
 
@@ -57,7 +58,8 @@ public sealed class GameWorld
 
         const InputActionFlags validActions = InputActionFlags.Attack
             | InputActionFlags.Jump
-            | InputActionFlags.ReservedZ;
+            | InputActionFlags.ReservedZ
+            | InputActionFlags.Revive;
         if ((input.Actions & ~validActions) != 0)
         {
             throw new ArgumentOutOfRangeException(nameof(input));
@@ -77,16 +79,27 @@ public sealed class GameWorld
         player.LastInputSequence = input.Sequence;
         if (player.IsDead)
         {
-            ClearInput(player);
+            player.Horizontal = 0;
+            player.Depth = 0;
+            player.PendingAttack = false;
+            player.PendingJump = false;
+            player.PendingRevive |= IsPressed(
+                input.Actions,
+                player.HeldActions,
+                InputActionFlags.Revive);
+            player.HeldActions = input.Actions;
             return true;
         }
 
         player.Horizontal = input.Horizontal;
         player.Depth = input.Depth;
-        player.PendingAttack |= IsPressed(
-            input.Actions,
-            player.HeldActions,
-            InputActionFlags.Attack);
+        var wasHoldingRevive =
+            (player.HeldActions & InputActionFlags.Revive) != 0;
+        player.PendingAttack |= !wasHoldingRevive
+            && IsPressed(
+                input.Actions,
+                player.HeldActions,
+                InputActionFlags.Attack);
         player.PendingJump |= IsPressed(
             input.Actions,
             player.HeldActions,
@@ -102,6 +115,7 @@ public sealed class GameWorld
             throw new ArgumentOutOfRangeException(nameof(deltaSeconds));
         }
 
+        serverTimeSeconds += deltaSeconds;
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
         var attackers = new List<PlayerState>();
         foreach (var player in playersByConnection.Values)
@@ -114,7 +128,15 @@ public sealed class GameWorld
                 player.AttackCooldownRemaining - deltaSeconds);
             if (player.IsDead)
             {
-                ClearInput(player);
+                var reviveRequested = player.PendingRevive;
+                player.PendingRevive = false;
+                if (reviveRequested && CanRevive(player))
+                {
+                    Revive(player);
+                    continue;
+                }
+
+                ClearControllableState(player, clearHeldActions: false);
                 player.AttackTimeRemaining = 0f;
                 player.AttackCooldownRemaining = 0f;
                 player.VerticalVelocity = 0f;
@@ -287,7 +309,7 @@ public sealed class GameWorld
             && MathF.Abs(target.Z - attacker.Z) <= GameProtocol.AttackHeightTolerance;
     }
 
-    private static void ApplyDamage(PlayerState player, int damage)
+    private void ApplyDamage(PlayerState player, int damage)
     {
         player.Health = Math.Max(0, player.Health - damage);
         if (!player.IsDead)
@@ -295,20 +317,45 @@ public sealed class GameWorld
             return;
         }
 
-        ClearInput(player);
+        player.DeathTimeSeconds = serverTimeSeconds;
+        ClearControllableState(player, clearHeldActions: true);
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
         player.Z = 0f;
     }
 
-    private static void ClearInput(PlayerState player)
+    private bool CanRevive(PlayerState player)
+    {
+        return player.DeathTimeSeconds.HasValue
+            && serverTimeSeconds - player.DeathTimeSeconds.Value
+                >= GameProtocol.ReviveDelaySeconds;
+    }
+
+    private static void Revive(PlayerState player)
+    {
+        player.Health = GameProtocol.MaxHealth;
+        player.DeathTimeSeconds = null;
+        ClearControllableState(player, clearHeldActions: false);
+        player.AttackTimeRemaining = 0f;
+        player.AttackCooldownRemaining = 0f;
+        player.VerticalVelocity = 0f;
+        player.Z = 0f;
+    }
+
+    private static void ClearControllableState(
+        PlayerState player,
+        bool clearHeldActions)
     {
         player.Horizontal = 0;
         player.Depth = 0;
-        player.HeldActions = InputActionFlags.None;
         player.PendingAttack = false;
         player.PendingJump = false;
+        player.PendingRevive = false;
+        if (clearHeldActions)
+        {
+            player.HeldActions = InputActionFlags.None;
+        }
     }
 
     private sealed class PlayerState(int playerId, float x, float y)
@@ -335,6 +382,8 @@ public sealed class GameWorld
 
         public bool IsDead => Health == 0;
 
+        public double? DeathTimeSeconds { get; set; }
+
         public FacingDirection Facing { get; set; } = FacingDirection.Right;
 
         public InputActionFlags HeldActions { get; set; }
@@ -342,6 +391,8 @@ public sealed class GameWorld
         public bool PendingAttack { get; set; }
 
         public bool PendingJump { get; set; }
+
+        public bool PendingRevive { get; set; }
 
         public uint LastInputSequence { get; set; }
 
