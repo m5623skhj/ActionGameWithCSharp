@@ -50,7 +50,15 @@ public sealed class GameWorld
             throw new ArgumentOutOfRangeException(nameof(input));
         }
 
-        if (input.Vertical is < -1 or > 1)
+        if (input.Depth is < -1 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(input));
+        }
+
+        const InputActionFlags validActions = InputActionFlags.Attack
+            | InputActionFlags.Jump
+            | InputActionFlags.ReservedZ;
+        if ((input.Actions & ~validActions) != 0)
         {
             throw new ArgumentOutOfRangeException(nameof(input));
         }
@@ -68,7 +76,16 @@ public sealed class GameWorld
         player.HasInput = true;
         player.LastInputSequence = input.Sequence;
         player.Horizontal = input.Horizontal;
-        player.Vertical = input.Vertical;
+        player.Depth = input.Depth;
+        player.PendingAttack |= IsPressed(
+            input.Actions,
+            player.HeldActions,
+            InputActionFlags.Attack);
+        player.PendingJump |= IsPressed(
+            input.Actions,
+            player.HeldActions,
+            InputActionFlags.Jump);
+        player.HeldActions = input.Actions;
         return true;
     }
 
@@ -82,24 +99,65 @@ public sealed class GameWorld
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
         foreach (var player in playersByConnection.Values)
         {
+            player.AttackTimeRemaining = Math.Max(
+                0f,
+                player.AttackTimeRemaining - deltaSeconds);
+            player.AttackCooldownRemaining = Math.Max(
+                0f,
+                player.AttackCooldownRemaining - deltaSeconds);
+
+            if (player.PendingJump && player.Z <= 0f)
+            {
+                player.VerticalVelocity = GameProtocol.JumpInitialVelocity;
+            }
+
+            if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
+            {
+                player.AttackTimeRemaining = GameProtocol.AttackDuration;
+                player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
+            }
+
+            player.PendingJump = false;
+            player.PendingAttack = false;
+
             var horizontal = (float)player.Horizontal;
-            var vertical = (float)player.Vertical;
-            var lengthSquared = (horizontal * horizontal) + (vertical * vertical);
+            var depth = (float)player.Depth;
+            var lengthSquared = (horizontal * horizontal) + (depth * depth);
             if (lengthSquared > 1f)
             {
                 var inverseLength = 1f / MathF.Sqrt(lengthSquared);
                 horizontal *= inverseLength;
-                vertical *= inverseLength;
+                depth *= inverseLength;
+            }
+
+            if (horizontal < 0f)
+            {
+                player.Facing = FacingDirection.Left;
+            }
+            else if (horizontal > 0f)
+            {
+                player.Facing = FacingDirection.Right;
             }
 
             player.X = Math.Clamp(
-                player.X + (horizontal * GameProtocol.PlayerSpeed * deltaSeconds),
+                player.X + (horizontal * GameProtocol.HorizontalSpeed * deltaSeconds),
                 halfPlayerSize,
                 GameProtocol.WorldWidth - halfPlayerSize);
             player.Y = Math.Clamp(
-                player.Y + (vertical * GameProtocol.PlayerSpeed * deltaSeconds),
-                halfPlayerSize,
-                GameProtocol.WorldHeight - halfPlayerSize);
+                player.Y + (depth * GameProtocol.DepthSpeed * deltaSeconds),
+                GameProtocol.FloorTop,
+                GameProtocol.FloorBottom);
+
+            if (player.Z > 0f || player.VerticalVelocity > 0f)
+            {
+                player.Z += player.VerticalVelocity * deltaSeconds;
+                player.VerticalVelocity -= GameProtocol.Gravity * deltaSeconds;
+                if (player.Z <= 0f)
+                {
+                    player.Z = 0f;
+                    player.VerticalVelocity = 0f;
+                }
+            }
         }
 
         ServerTick++;
@@ -109,7 +167,13 @@ public sealed class GameWorld
     {
         var players = playersByConnection.Values
             .OrderBy(player => player.PlayerId)
-            .Select(player => new PlayerSnapshot(player.PlayerId, player.X, player.Y))
+            .Select(player => new PlayerSnapshot(
+                player.PlayerId,
+                player.X,
+                player.Y,
+                player.Z,
+                player.Facing,
+                player.AttackTimeRemaining > 0f))
             .ToArray();
         return new WorldSnapshotPacket(ServerTick, players);
     }
@@ -118,7 +182,13 @@ public sealed class GameWorld
     {
         if (playersByConnection.TryGetValue(connectionId, out var state))
         {
-            player = new PlayerSnapshot(state.PlayerId, state.X, state.Y);
+            player = new PlayerSnapshot(
+                state.PlayerId,
+                state.X,
+                state.Y,
+                state.Z,
+                state.Facing,
+                state.AttackTimeRemaining > 0f);
             return true;
         }
 
@@ -141,12 +211,21 @@ public sealed class GameWorld
 
     private static (float X, float Y) GetSpawnPosition(int playerId)
     {
+        var middleDepth = (GameProtocol.FloorTop + GameProtocol.FloorBottom) / 2f;
         return playerId switch
         {
-            1 => (100f, GameProtocol.WorldHeight / 2f),
-            2 => (GameProtocol.WorldWidth - 100f, GameProtocol.WorldHeight / 2f),
+            1 => (100f, middleDepth),
+            2 => (GameProtocol.WorldWidth - 100f, middleDepth),
             _ => throw new ArgumentOutOfRangeException(nameof(playerId)),
         };
+    }
+
+    private static bool IsPressed(
+        InputActionFlags current,
+        InputActionFlags previous,
+        InputActionFlags action)
+    {
+        return (current & action) != 0 && (previous & action) == 0;
     }
 
     private sealed class PlayerState(int playerId, float x, float y)
@@ -157,9 +236,25 @@ public sealed class GameWorld
 
         public float Y { get; set; } = y;
 
+        public float Z { get; set; }
+
         public sbyte Horizontal { get; set; }
 
-        public sbyte Vertical { get; set; }
+        public sbyte Depth { get; set; }
+
+        public float VerticalVelocity { get; set; }
+
+        public float AttackTimeRemaining { get; set; }
+
+        public float AttackCooldownRemaining { get; set; }
+
+        public FacingDirection Facing { get; set; } = FacingDirection.Right;
+
+        public InputActionFlags HeldActions { get; set; }
+
+        public bool PendingAttack { get; set; }
+
+        public bool PendingJump { get; set; }
 
         public uint LastInputSequence { get; set; }
 

@@ -7,7 +7,11 @@ public sealed class GamePacketCodecTest
     [Fact]
     public void InputCommandRoundTrips()
     {
-        var expected = new InputCommandPacket(42, -1, 1);
+        var expected = new InputCommandPacket(
+            42,
+            -1,
+            1,
+            InputActionFlags.Attack | InputActionFlags.ReservedZ);
 
         var actual = GamePacketCodec.DecodeInputCommand(
             GamePacketCodec.EncodeInputCommand(expected));
@@ -21,8 +25,20 @@ public sealed class GamePacketCodecTest
         var expected = new WorldSnapshotPacket(
             17,
             [
-                new PlayerSnapshot(1, 100f, 200f),
-                new PlayerSnapshot(2, 700f, 250f),
+                new PlayerSnapshot(
+                    1,
+                    100f,
+                    200f,
+                    35f,
+                    FacingDirection.Right,
+                    true),
+                new PlayerSnapshot(
+                    2,
+                    700f,
+                    250f,
+                    0f,
+                    FacingDirection.Left,
+                    false),
             ]);
 
         var actual = GamePacketCodec.DecodeWorldSnapshot(
@@ -45,8 +61,19 @@ public sealed class GamePacketCodecTest
     public void InputWithOutOfRangeAxisIsRejected()
     {
         var payload = GamePacketCodec.EncodeInputCommand(
-            new InputCommandPacket(1, 0, 0));
-        payload[^1] = 2;
+            new InputCommandPacket(1, 0, 0, InputActionFlags.None));
+        payload[^2] = 2;
+
+        Assert.Throws<InvalidDataException>(() =>
+            GamePacketCodec.DecodeInputCommand(payload));
+    }
+
+    [Fact]
+    public void InputWithUnknownActionFlagIsRejected()
+    {
+        var payload = GamePacketCodec.EncodeInputCommand(
+            new InputCommandPacket(1, 0, 0, InputActionFlags.None));
+        payload[^1] = 0b1000_0000;
 
         Assert.Throws<InvalidDataException>(() =>
             GamePacketCodec.DecodeInputCommand(payload));
@@ -58,8 +85,8 @@ public sealed class GamePacketCodecTest
         var packet = new WorldSnapshotPacket(
             1,
             [
-                new PlayerSnapshot(1, 10f, 10f),
-                new PlayerSnapshot(1, 20f, 20f),
+                new PlayerSnapshot(1, 10f, 150f, 0f, FacingDirection.Right, false),
+                new PlayerSnapshot(1, 20f, 160f, 0f, FacingDirection.Left, false),
             ]);
 
         Assert.Throws<ArgumentException>(() =>

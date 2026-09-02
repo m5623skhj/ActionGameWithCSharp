@@ -40,39 +40,52 @@ public sealed class GameWorldTest
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryGetPlayer(10, out var initial));
 
-        Assert.True(world.ApplyInput(10, new InputCommandPacket(2, 1, 0)));
-        Assert.False(world.ApplyInput(10, new InputCommandPacket(1, -1, 0)));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(2, 1, 0, InputActionFlags.None)));
+        Assert.False(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var moved));
 
         Assert.Equal(
-            initial.X + (GameProtocol.PlayerSpeed * TickSeconds),
+            initial.X + (GameProtocol.HorizontalSpeed * TickSeconds),
             moved.X,
             precision: 4);
         Assert.Equal(initial.Y, moved.Y);
     }
 
     [Fact]
-    public void DiagonalInputIsNormalized()
+    public void DiagonalInputIsNormalizedBeforeAxisSpeedsAreApplied()
     {
         var horizontalWorld = new GameWorld();
         var diagonalWorld = new GameWorld();
         Assert.True(horizontalWorld.TryJoin(10, out _, out _));
         Assert.True(diagonalWorld.TryJoin(10, out _, out _));
-        Assert.True(horizontalWorld.ApplyInput(10, new InputCommandPacket(1, 1, 0)));
-        Assert.True(diagonalWorld.ApplyInput(10, new InputCommandPacket(1, 1, 1)));
-        Assert.True(horizontalWorld.TryGetPlayer(10, out var initial));
+        Assert.True(horizontalWorld.ApplyInput(
+            10,
+            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
+        Assert.True(diagonalWorld.ApplyInput(
+            10,
+            new InputCommandPacket(1, 1, 1, InputActionFlags.None)));
+        Assert.True(diagonalWorld.TryGetPlayer(10, out var initial));
 
         horizontalWorld.Update(TickSeconds);
         diagonalWorld.Update(TickSeconds);
         Assert.True(horizontalWorld.TryGetPlayer(10, out var horizontal));
         Assert.True(diagonalWorld.TryGetPlayer(10, out var diagonal));
 
-        var horizontalDistance = horizontal.X - initial.X;
-        var diagonalDistance = MathF.Sqrt(
-            MathF.Pow(diagonal.X - initial.X, 2f)
-            + MathF.Pow(diagonal.Y - initial.Y, 2f));
-        Assert.Equal(horizontalDistance, diagonalDistance, precision: 4);
+        var inverseSqrtTwo = 1f / MathF.Sqrt(2f);
+        Assert.Equal(
+            GameProtocol.HorizontalSpeed * TickSeconds * inverseSqrtTwo,
+            diagonal.X - initial.X,
+            precision: 4);
+        Assert.Equal(
+            GameProtocol.DepthSpeed * TickSeconds * inverseSqrtTwo,
+            diagonal.Y - initial.Y,
+            precision: 4);
+        Assert.True(horizontal.X > diagonal.X);
     }
 
     [Fact]
@@ -80,7 +93,9 @@ public sealed class GameWorldTest
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
-        Assert.True(world.ApplyInput(10, new InputCommandPacket(1, -1, 0)));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
 
         world.Update(10f);
         Assert.True(world.TryGetPlayer(10, out var player));
@@ -108,6 +123,106 @@ public sealed class GameWorldTest
         Assert.True(world.TryJoin(10, out _, out _));
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            world.ApplyInput(10, new InputCommandPacket(1, 2, 0)));
+            world.ApplyInput(
+                10,
+                new InputCommandPacket(1, 2, 0, InputActionFlags.None)));
+    }
+
+    [Fact]
+    public void JumpUsesServerGravityAndLandsOnGround()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, 0, 0, InputActionFlags.Jump)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var airborne));
+        Assert.True(airborne.Z > 0f);
+
+        for (var index = 0; index < 30; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(10, out var landed));
+        Assert.Equal(0f, landed.Z);
+    }
+
+    [Fact]
+    public void JumpPressedAgainWhileAirborneDoesNotDoubleJump()
+    {
+        var secondPressWorld = new GameWorld();
+        var controlWorld = new GameWorld();
+        Assert.True(secondPressWorld.TryJoin(10, out _, out _));
+        Assert.True(controlWorld.TryJoin(10, out _, out _));
+
+        ApplyToBoth(new InputCommandPacket(1, 0, 0, InputActionFlags.Jump));
+        UpdateBoth();
+        ApplyToBoth(new InputCommandPacket(2, 0, 0, InputActionFlags.None));
+        UpdateBoth();
+        Assert.True(secondPressWorld.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Jump)));
+        Assert.True(controlWorld.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.None)));
+        UpdateBoth();
+
+        Assert.True(secondPressWorld.TryGetPlayer(10, out var secondPressPlayer));
+        Assert.True(controlWorld.TryGetPlayer(10, out var controlPlayer));
+        Assert.Equal(controlPlayer.Z, secondPressPlayer.Z, precision: 4);
+
+        void ApplyToBoth(InputCommandPacket input)
+        {
+            Assert.True(secondPressWorld.ApplyInput(10, input));
+            Assert.True(controlWorld.ApplyInput(10, input));
+        }
+
+        void UpdateBoth()
+        {
+            secondPressWorld.Update(TickSeconds);
+            controlWorld.Update(TickSeconds);
+        }
+    }
+
+    [Fact]
+    public void AttackUsesFacingAndExpires()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, -1, 0, InputActionFlags.Attack)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var attacking));
+        Assert.Equal(FacingDirection.Left, attacking.Facing);
+        Assert.True(attacking.IsAttacking);
+
+        for (var index = 0; index < 4; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(10, out var finished));
+        Assert.False(finished.IsAttacking);
+    }
+
+    [Fact]
+    public void ReservedZInputDoesNotChangeActionState()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, 0, 0, InputActionFlags.ReservedZ)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var player));
+
+        Assert.Equal(0f, player.Z);
+        Assert.False(player.IsAttacking);
     }
 }

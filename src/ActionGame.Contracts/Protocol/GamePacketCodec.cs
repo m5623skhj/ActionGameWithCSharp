@@ -7,9 +7,12 @@ public static class GamePacketCodec
     private const int HeaderSize = 2;
     private const int JoinAcceptedSize = HeaderSize + sizeof(int);
     private const int JoinRejectedSize = HeaderSize + sizeof(byte);
-    private const int InputCommandSize = HeaderSize + sizeof(uint) + 2;
+    private const int InputCommandSize = HeaderSize + sizeof(uint) + 3;
     private const int WorldSnapshotHeaderSize = HeaderSize + sizeof(long) + sizeof(byte);
-    private const int PlayerSnapshotSize = sizeof(int) + sizeof(float) + sizeof(float);
+    private const int PlayerSnapshotSize =
+        sizeof(int) + (3 * sizeof(float)) + sizeof(byte) + sizeof(byte);
+    private const InputActionFlags ValidInputActions =
+        InputActionFlags.Attack | InputActionFlags.Jump | InputActionFlags.ReservedZ;
 
     public static PacketType ReadPacketType(ReadOnlySpan<byte> payload)
     {
@@ -90,12 +93,14 @@ public static class GamePacketCodec
     public static byte[] EncodeInputCommand(InputCommandPacket packet)
     {
         ValidateInputAxis(packet.Horizontal, nameof(packet.Horizontal));
-        ValidateInputAxis(packet.Vertical, nameof(packet.Vertical));
+        ValidateInputAxis(packet.Depth, nameof(packet.Depth));
+        ValidateInputActions(packet.Actions, nameof(packet.Actions));
 
         var payload = CreateHeader(PacketType.InputCommand, InputCommandSize);
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(HeaderSize), packet.Sequence);
         payload[HeaderSize + sizeof(uint)] = unchecked((byte)packet.Horizontal);
-        payload[HeaderSize + sizeof(uint) + 1] = unchecked((byte)packet.Vertical);
+        payload[HeaderSize + sizeof(uint) + 1] = unchecked((byte)packet.Depth);
+        payload[HeaderSize + sizeof(uint) + 2] = (byte)packet.Actions;
         return payload;
     }
 
@@ -104,10 +109,12 @@ public static class GamePacketCodec
         ValidateExactPacket(payload, PacketType.InputCommand, InputCommandSize);
         var sequence = BinaryPrimitives.ReadUInt32LittleEndian(payload[HeaderSize..]);
         var horizontal = unchecked((sbyte)payload[HeaderSize + sizeof(uint)]);
-        var vertical = unchecked((sbyte)payload[HeaderSize + sizeof(uint) + 1]);
+        var depth = unchecked((sbyte)payload[HeaderSize + sizeof(uint) + 1]);
+        var actions = (InputActionFlags)payload[HeaderSize + sizeof(uint) + 2];
         ValidateDecodedInputAxis(horizontal, nameof(horizontal));
-        ValidateDecodedInputAxis(vertical, nameof(vertical));
-        return new InputCommandPacket(sequence, horizontal, vertical);
+        ValidateDecodedInputAxis(depth, nameof(depth));
+        ValidateDecodedInputActions(actions);
+        return new InputCommandPacket(sequence, horizontal, depth, actions);
     }
 
     public static byte[] EncodeWorldSnapshot(WorldSnapshotPacket packet)
@@ -142,6 +149,13 @@ public static class GamePacketCodec
             BinaryPrimitives.WriteInt32LittleEndian(
                 payload.AsSpan(offset + sizeof(int) + sizeof(float)),
                 BitConverter.SingleToInt32Bits(player.Y));
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + sizeof(int) + (2 * sizeof(float))),
+                BitConverter.SingleToInt32Bits(player.Z));
+            payload[offset + sizeof(int) + (3 * sizeof(float))] =
+                unchecked((byte)(sbyte)player.Facing);
+            payload[offset + sizeof(int) + (3 * sizeof(float)) + 1] =
+                player.IsAttacking ? (byte)1 : (byte)0;
             offset += PlayerSnapshotSize;
         }
 
@@ -188,7 +202,24 @@ public static class GamePacketCodec
             var y = BitConverter.Int32BitsToSingle(
                 BinaryPrimitives.ReadInt32LittleEndian(
                     payload[(offset + sizeof(int) + sizeof(float))..]));
-            players[index] = new PlayerSnapshot(playerId, x, y);
+            var z = BitConverter.Int32BitsToSingle(
+                BinaryPrimitives.ReadInt32LittleEndian(
+                    payload[(offset + sizeof(int) + (2 * sizeof(float)))..]));
+            var facing = (FacingDirection)unchecked(
+                (sbyte)payload[offset + sizeof(int) + (3 * sizeof(float))]);
+            var attackingValue = payload[offset + sizeof(int) + (3 * sizeof(float)) + 1];
+            if (attackingValue > 1)
+            {
+                throw new InvalidDataException("Invalid attacking state value.");
+            }
+
+            players[index] = new PlayerSnapshot(
+                playerId,
+                x,
+                y,
+                z,
+                facing,
+                attackingValue == 1);
             offset += PlayerSnapshotSize;
         }
 
@@ -247,17 +278,26 @@ public static class GamePacketCodec
                 throw createException($"Duplicate player id: {player.PlayerId}.");
             }
 
-            if (!float.IsFinite(player.X) || !float.IsFinite(player.Y))
+            if (!float.IsFinite(player.X)
+                || !float.IsFinite(player.Y)
+                || !float.IsFinite(player.Z))
             {
                 throw createException("Player coordinates must be finite.");
             }
 
             if (player.X < 0f
                 || player.X > GameProtocol.WorldWidth
-                || player.Y < 0f
-                || player.Y > GameProtocol.WorldHeight)
+                || player.Y < GameProtocol.FloorTop
+                || player.Y > GameProtocol.FloorBottom
+                || player.Z < 0f
+                || player.Z > GameProtocol.WorldHeight)
             {
                 throw createException("Player coordinates are outside the world.");
+            }
+
+            if (!Enum.IsDefined(player.Facing))
+            {
+                throw createException($"Invalid facing direction: {player.Facing}.");
             }
         }
     }
@@ -278,11 +318,29 @@ public static class GamePacketCodec
         }
     }
 
+    private static void ValidateInputActions(
+        InputActionFlags actions,
+        string parameterName)
+    {
+        if ((actions & ~ValidInputActions) != 0)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
     private static void ValidateDecodedInputAxis(sbyte axis, string axisName)
     {
         if (axis is < -1 or > 1)
         {
             throw new InvalidDataException($"Invalid {axisName} input axis: {axis}.");
+        }
+    }
+
+    private static void ValidateDecodedInputActions(InputActionFlags actions)
+    {
+        if ((actions & ~ValidInputActions) != 0)
+        {
+            throw new InvalidDataException($"Invalid input action flags: {actions}.");
         }
     }
 }

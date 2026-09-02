@@ -20,6 +20,8 @@ public sealed class ActionGameClientGame : Game
     private uint inputSequence;
     private double inputAccumulator;
     private long latestServerTick = -1;
+    private KeyboardState previousKeyboard;
+    private InputActionFlags pendingActionPresses;
     private bool networkStarted;
     private string connectionStatus = "Starting";
 
@@ -73,7 +75,9 @@ public sealed class ActionGameClientGame : Game
         }
 
         DrainNetworkEvents();
+        CaptureActionPresses(keyboard);
         QueueInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
+        previousKeyboard = keyboard;
         base.Update(gameTime);
     }
 
@@ -87,14 +91,39 @@ public sealed class ActionGameClientGame : Game
 
         spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         DrawWorldBorder(spriteBatch, pixel);
-        foreach (var player in players.Values.OrderBy(player => player.PlayerId))
+        foreach (var player in players.Values
+            .OrderBy(player => player.Y)
+            .ThenBy(player => player.PlayerId))
         {
             var color = player.PlayerId == localPlayerId
                 ? new Color(80, 220, 120)
                 : new Color(245, 150, 70);
+            var shadowRectangle = new Rectangle(
+                (int)MathF.Round(player.X - (GameProtocol.PlayerSize * 0.6f)),
+                (int)MathF.Round(player.Y - 4f),
+                (int)MathF.Round(GameProtocol.PlayerSize * 1.2f),
+                8);
+            spriteBatch.Draw(pixel, shadowRectangle, new Color(0, 0, 0, 110));
+
+            var screenY = player.Y - player.Z;
+            if (player.IsAttacking)
+            {
+                var attackWidth = (int)MathF.Round(GameProtocol.AttackReach);
+                var attackX = player.Facing == FacingDirection.Right
+                    ? (int)MathF.Round(player.X + (GameProtocol.PlayerSize / 2f))
+                    : (int)MathF.Round(
+                        player.X - (GameProtocol.PlayerSize / 2f) - attackWidth);
+                var attackRectangle = new Rectangle(
+                    attackX,
+                    (int)MathF.Round(screenY - 8f),
+                    attackWidth,
+                    16);
+                spriteBatch.Draw(pixel, attackRectangle, new Color(255, 220, 80, 170));
+            }
+
             var rectangle = new Rectangle(
                 (int)MathF.Round(player.X - (GameProtocol.PlayerSize / 2f)),
-                (int)MathF.Round(player.Y - (GameProtocol.PlayerSize / 2f)),
+                (int)MathF.Round(screenY - (GameProtocol.PlayerSize / 2f)),
                 (int)GameProtocol.PlayerSize,
                 (int)GameProtocol.PlayerSize);
             spriteBatch.Draw(pixel, rectangle, color);
@@ -180,6 +209,7 @@ public sealed class ActionGameClientGame : Game
         if (!localPlayerId.HasValue)
         {
             inputAccumulator = 0d;
+            pendingActionPresses = InputActionFlags.None;
             return;
         }
 
@@ -189,25 +219,61 @@ public sealed class ActionGameClientGame : Game
         {
             inputAccumulator -= inputInterval;
             var horizontal = GetAxis(
-                keyboard.IsKeyDown(Keys.A),
-                keyboard.IsKeyDown(Keys.D));
-            var vertical = GetAxis(
-                keyboard.IsKeyDown(Keys.W),
-                keyboard.IsKeyDown(Keys.S));
+                keyboard.IsKeyDown(Keys.Left),
+                keyboard.IsKeyDown(Keys.Right));
+            var depth = GetAxis(
+                keyboard.IsKeyDown(Keys.Up),
+                keyboard.IsKeyDown(Keys.Down));
+            var actions = pendingActionPresses;
+            if (keyboard.IsKeyDown(Keys.X))
+            {
+                actions |= InputActionFlags.Attack;
+            }
+
+            if (keyboard.IsKeyDown(Keys.C))
+            {
+                actions |= InputActionFlags.Jump;
+            }
+
+            if (keyboard.IsKeyDown(Keys.Z))
+            {
+                actions |= InputActionFlags.ReservedZ;
+            }
+
             var payload = GamePacketCodec.EncodeInputCommand(
-                new InputCommandPacket(++inputSequence, horizontal, vertical));
+                new InputCommandPacket(++inputSequence, horizontal, depth, actions));
             if (!networkClient.TryQueue(payload))
             {
                 connectionStatus = "Send queue unavailable";
                 UpdateWindowTitle();
                 break;
             }
+
+            pendingActionPresses = InputActionFlags.None;
+        }
+    }
+
+    private void CaptureActionPresses(KeyboardState keyboard)
+    {
+        LatchPressedAction(keyboard, Keys.X, InputActionFlags.Attack);
+        LatchPressedAction(keyboard, Keys.C, InputActionFlags.Jump);
+        LatchPressedAction(keyboard, Keys.Z, InputActionFlags.ReservedZ);
+    }
+
+    private void LatchPressedAction(
+        KeyboardState keyboard,
+        Keys key,
+        InputActionFlags action)
+    {
+        if (keyboard.IsKeyDown(key) && previousKeyboard.IsKeyUp(key))
+        {
+            pendingActionPresses |= action;
         }
     }
 
     private void UpdateWindowTitle()
     {
-        Window.Title = $"Action Game - {connectionStatus} - WASD / Esc";
+        Window.Title = $"Action Game - {connectionStatus} - Arrows / X / C / Z / Esc";
     }
 
     private static sbyte GetAxis(bool negative, bool positive)
@@ -229,6 +295,13 @@ public sealed class ActionGameClientGame : Game
         spriteBatch.Draw(pixel, new Rectangle(0, height - 2, width, 2), color);
         spriteBatch.Draw(pixel, new Rectangle(0, 0, 2, height), color);
         spriteBatch.Draw(pixel, new Rectangle(width - 2, 0, 2, height), color);
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(0, (int)GameProtocol.FloorTop, width, 2),
+            new Color(55, 62, 73));
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(0, (int)GameProtocol.FloorBottom, width, 2),
+            new Color(55, 62, 73));
     }
 }
-
