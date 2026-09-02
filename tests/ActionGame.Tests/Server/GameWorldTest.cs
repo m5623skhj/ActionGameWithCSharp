@@ -211,6 +211,120 @@ public sealed class GameWorldTest
     }
 
     [Fact]
+    public void AttackInRangeDealsDamageOnlyOncePerAction()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var damaged));
+        Assert.Equal(GameProtocol.MaxHealth - GameProtocol.AttackDamage, damaged.Health);
+
+        for (var index = 0; index < 3; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(20, out var afterAttack));
+        Assert.Equal(damaged.Health, afterAttack.Health);
+    }
+
+    [Fact]
+    public void AttackOutsideDepthRangeDoesNotDealDamage()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 1, InputActionFlags.None)));
+        for (var index = 0; index < 5; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var target));
+        Assert.Equal(GameProtocol.MaxHealth, target.Health);
+    }
+
+    [Fact]
+    public void SimultaneousAttacksDamageBothPlayers()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(10, out var first));
+        Assert.True(world.TryGetPlayer(20, out var second));
+        Assert.Equal(GameProtocol.MaxHealth - GameProtocol.AttackDamage, first.Health);
+        Assert.Equal(GameProtocol.MaxHealth - GameProtocol.AttackDamage, second.Health);
+    }
+
+    [Fact]
+    public void ZeroHealthMarksPlayerDeadAndIgnoresFurtherInput()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        uint sequence = 3;
+        for (var attackIndex = 0;
+            attackIndex < GameProtocol.MaxHealth / GameProtocol.AttackDamage;
+            attackIndex++)
+        {
+            Assert.True(world.ApplyInput(
+                10,
+                new InputCommandPacket(
+                    sequence++,
+                    0,
+                    0,
+                    InputActionFlags.Attack)));
+            world.Update(TickSeconds);
+            Assert.True(world.ApplyInput(
+                10,
+                new InputCommandPacket(
+                    sequence++,
+                    0,
+                    0,
+                    InputActionFlags.None)));
+            for (var cooldownTick = 0; cooldownTick < 7; cooldownTick++)
+            {
+                world.Update(TickSeconds);
+            }
+        }
+
+        Assert.True(world.TryGetPlayer(20, out var dead));
+        Assert.Equal(0, dead.Health);
+        Assert.True(dead.IsDead);
+        Assert.False(dead.IsAttacking);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(
+                3,
+                1,
+                1,
+                InputActionFlags.Attack | InputActionFlags.Jump)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var afterInput));
+        Assert.Equal(dead.X, afterInput.X);
+        Assert.Equal(dead.Y, afterInput.Y);
+        Assert.Equal(0f, afterInput.Z);
+        Assert.Equal(0, afterInput.Health);
+        Assert.True(afterInput.IsDead);
+        Assert.False(afterInput.IsAttacking);
+    }
+
+    [Fact]
     public void ReservedZInputDoesNotChangeActionState()
     {
         var world = new GameWorld();
@@ -224,5 +338,31 @@ public sealed class GameWorldTest
 
         Assert.Equal(0f, player.Z);
         Assert.False(player.IsAttacking);
+    }
+
+    private static GameWorld CreateWorldWithPlayersInAttackRange()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.TryJoin(20, out _, out _));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+        for (var index = 0; index < 30; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        return world;
     }
 }

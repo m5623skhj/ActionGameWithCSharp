@@ -116,6 +116,7 @@ public sealed class ActionGameClientGame : Game
             }
 
             characterRenderer?.Draw(spriteBatch, player);
+            DrawHealthBar(spriteBatch, pixel, player);
         }
 
         spriteBatch.End();
@@ -295,5 +296,36 @@ public sealed class ActionGameClientGame : Game
             pixel,
             new Rectangle(0, (int)GameProtocol.FloorBottom, width, 2),
             new Color(55, 62, 73));
+    }
+
+    private static void DrawHealthBar(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        PlayerSnapshot player)
+    {
+        const int width = 48;
+        const int height = 6;
+        var screenY = player.Y - player.Z;
+        var x = (int)MathF.Round(player.X - (width / 2f));
+        var y = (int)MathF.Round(screenY - 58f);
+        spriteBatch.Draw(pixel, new Rectangle(x, y, width, height), new Color(15, 17, 21));
+
+        var fillWidth = (int)MathF.Round(
+            (width - 2) * (player.Health / (float)GameProtocol.MaxHealth));
+        if (fillWidth <= 0)
+        {
+            return;
+        }
+
+        var color = player.Health switch
+        {
+            > 50 => new Color(70, 210, 95),
+            > 25 => new Color(235, 190, 55),
+            _ => new Color(225, 70, 65),
+        };
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(x + 1, y + 1, fillWidth, height - 2),
+            color);
     }
 }

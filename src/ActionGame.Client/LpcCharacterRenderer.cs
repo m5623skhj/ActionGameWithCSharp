@@ -11,6 +11,8 @@ internal sealed class LpcCharacterRenderer : IDisposable
     private const float WalkFrameDuration = 0.09f;
     private const float IdleFrameDuration = 0.30f;
     private const float JumpFrameDuration = 0.12f;
+    private const float DeathFrameDuration = 0.08f;
+    private const int DeathFrameCount = 6;
     private static readonly int[] IdleFrames = [0, 0, 1];
     private static readonly int[] JumpFrames = [0, 1, 2, 3, 4, 1];
     private static readonly Vector2 StandardOrigin = new(32f, 56f);
@@ -112,7 +114,9 @@ internal sealed class LpcCharacterRenderer : IDisposable
         var frameIndex = GetFrameIndex(state, sprites.AttackFrameCount);
         var direction = state.Animation == CharacterAnimation.Attack
             ? DirectionFromFacing(player.Facing)
-            : state.Direction;
+            : state.Animation == CharacterAnimation.Death
+                ? CharacterDirection.Up
+                : state.Direction;
         var sourceRectangle = new Rectangle(
             frameIndex * frameSize,
             (int)direction * frameSize,
@@ -164,6 +168,9 @@ internal sealed class LpcCharacterRenderer : IDisposable
                 attackFrameCount - 1,
                 (int)(state.ElapsedSeconds / GameProtocol.AttackDuration
                     * attackFrameCount)),
+            CharacterAnimation.Death => Math.Min(
+                DeathFrameCount - 1,
+                (int)(state.ElapsedSeconds / DeathFrameDuration)),
             _ => throw new ArgumentOutOfRangeException(nameof(state)),
         };
     }
@@ -217,6 +224,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
         Walk,
         Jump,
         Attack,
+        Death,
     }
 
     private enum CharacterDirection
@@ -273,6 +281,11 @@ internal sealed class LpcCharacterRenderer : IDisposable
             PlayerSnapshot player,
             bool isMoving)
         {
+            if (player.IsDead)
+            {
+                return CharacterAnimation.Death;
+            }
+
             if (player.IsAttacking)
             {
                 return CharacterAnimation.Attack;
@@ -292,6 +305,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
         Texture2D walk,
         Texture2D jump,
         Texture2D attack,
+        Texture2D death,
         int attackFrameSize,
         int attackFrameCount,
         Vector2 attackOrigin) : IDisposable
@@ -320,11 +334,14 @@ internal sealed class LpcCharacterRenderer : IDisposable
                 textures.Add(jump);
                 var attack = LoadTexture(graphicsDevice, characterName, "attack.png");
                 textures.Add(attack);
+                var death = LoadTexture(graphicsDevice, characterName, "death.png");
+                textures.Add(death);
                 return new CharacterSprites(
                     idle,
                     walk,
                     jump,
                     attack,
+                    death,
                     attackFrameSize,
                     attackFrameCount,
                     attackOrigin);
@@ -348,6 +365,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
                 CharacterAnimation.Walk => walk,
                 CharacterAnimation.Jump => jump,
                 CharacterAnimation.Attack => attack,
+                CharacterAnimation.Death => death,
                 _ => throw new ArgumentOutOfRangeException(nameof(animation)),
             };
         }
@@ -358,6 +376,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
             walk.Dispose();
             jump.Dispose();
             attack.Dispose();
+            death.Dispose();
         }
 
         private static Texture2D LoadTexture(

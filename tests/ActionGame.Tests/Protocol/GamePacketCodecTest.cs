@@ -31,14 +31,18 @@ public sealed class GamePacketCodecTest
                     200f,
                     35f,
                     FacingDirection.Right,
-                    true),
+                    true,
+                    80,
+                    false),
                 new PlayerSnapshot(
                     2,
                     700f,
                     250f,
                     0f,
                     FacingDirection.Left,
-                    false),
+                    false,
+                    0,
+                    true),
             ]);
 
         var actual = GamePacketCodec.DecodeWorldSnapshot(
@@ -85,8 +89,45 @@ public sealed class GamePacketCodecTest
         var packet = new WorldSnapshotPacket(
             1,
             [
-                new PlayerSnapshot(1, 10f, 150f, 0f, FacingDirection.Right, false),
-                new PlayerSnapshot(1, 20f, 160f, 0f, FacingDirection.Left, false),
+                new PlayerSnapshot(
+                    1,
+                    10f,
+                    150f,
+                    0f,
+                    FacingDirection.Right,
+                    false,
+                    GameProtocol.MaxHealth,
+                    false),
+                new PlayerSnapshot(
+                    1,
+                    20f,
+                    160f,
+                    0f,
+                    FacingDirection.Left,
+                    false,
+                    GameProtocol.MaxHealth,
+                    false),
+            ]);
+
+        Assert.Throws<ArgumentException>(() =>
+            GamePacketCodec.EncodeWorldSnapshot(packet));
+    }
+
+    [Fact]
+    public void SnapshotWithMismatchedDeadStateIsRejected()
+    {
+        var packet = new WorldSnapshotPacket(
+            1,
+            [
+                new PlayerSnapshot(
+                    1,
+                    10f,
+                    150f,
+                    0f,
+                    FacingDirection.Right,
+                    false,
+                    0,
+                    false),
             ]);
 
         Assert.Throws<ArgumentException>(() =>

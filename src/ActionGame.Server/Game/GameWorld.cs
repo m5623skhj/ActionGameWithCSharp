@@ -75,6 +75,12 @@ public sealed class GameWorld
 
         player.HasInput = true;
         player.LastInputSequence = input.Sequence;
+        if (player.IsDead)
+        {
+            ClearInput(player);
+            return true;
+        }
+
         player.Horizontal = input.Horizontal;
         player.Depth = input.Depth;
         player.PendingAttack |= IsPressed(
@@ -97,6 +103,7 @@ public sealed class GameWorld
         }
 
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
+        var attackers = new List<PlayerState>();
         foreach (var player in playersByConnection.Values)
         {
             player.AttackTimeRemaining = Math.Max(
@@ -105,6 +112,15 @@ public sealed class GameWorld
             player.AttackCooldownRemaining = Math.Max(
                 0f,
                 player.AttackCooldownRemaining - deltaSeconds);
+            if (player.IsDead)
+            {
+                ClearInput(player);
+                player.AttackTimeRemaining = 0f;
+                player.AttackCooldownRemaining = 0f;
+                player.VerticalVelocity = 0f;
+                player.Z = 0f;
+                continue;
+            }
 
             if (player.PendingJump && player.Z <= 0f)
             {
@@ -115,6 +131,7 @@ public sealed class GameWorld
             {
                 player.AttackTimeRemaining = GameProtocol.AttackDuration;
                 player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
+                attackers.Add(player);
             }
 
             player.PendingJump = false;
@@ -160,6 +177,8 @@ public sealed class GameWorld
             }
         }
 
+        ResolveAttacks(attackers);
+
         ServerTick++;
     }
 
@@ -173,7 +192,9 @@ public sealed class GameWorld
                 player.Y,
                 player.Z,
                 player.Facing,
-                player.AttackTimeRemaining > 0f))
+                player.AttackTimeRemaining > 0f,
+                player.Health,
+                player.IsDead))
             .ToArray();
         return new WorldSnapshotPacket(ServerTick, players);
     }
@@ -188,7 +209,9 @@ public sealed class GameWorld
                 state.Y,
                 state.Z,
                 state.Facing,
-                state.AttackTimeRemaining > 0f);
+                state.AttackTimeRemaining > 0f,
+                state.Health,
+                state.IsDead);
             return true;
         }
 
@@ -228,6 +251,66 @@ public sealed class GameWorld
         return (current & action) != 0 && (previous & action) == 0;
     }
 
+    private void ResolveAttacks(IReadOnlyList<PlayerState> attackers)
+    {
+        var pendingDamage = new Dictionary<PlayerState, int>();
+        foreach (var attacker in attackers)
+        {
+            foreach (var target in playersByConnection.Values)
+            {
+                if (ReferenceEquals(attacker, target)
+                    || target.IsDead
+                    || !IsWithinAttackRange(attacker, target))
+                {
+                    continue;
+                }
+
+                pendingDamage.TryGetValue(target, out var damage);
+                pendingDamage[target] = damage + GameProtocol.AttackDamage;
+            }
+        }
+
+        foreach (var pair in pendingDamage)
+        {
+            ApplyDamage(pair.Key, pair.Value);
+        }
+    }
+
+    private static bool IsWithinAttackRange(PlayerState attacker, PlayerState target)
+    {
+        var facingMultiplier = attacker.Facing == FacingDirection.Right ? 1f : -1f;
+        var forwardDistance = (target.X - attacker.X) * facingMultiplier;
+        var horizontalReach = GameProtocol.PlayerSize + GameProtocol.AttackReach;
+        return forwardDistance >= 0f
+            && forwardDistance <= horizontalReach
+            && MathF.Abs(target.Y - attacker.Y) <= GameProtocol.AttackDepthTolerance
+            && MathF.Abs(target.Z - attacker.Z) <= GameProtocol.AttackHeightTolerance;
+    }
+
+    private static void ApplyDamage(PlayerState player, int damage)
+    {
+        player.Health = Math.Max(0, player.Health - damage);
+        if (!player.IsDead)
+        {
+            return;
+        }
+
+        ClearInput(player);
+        player.AttackTimeRemaining = 0f;
+        player.AttackCooldownRemaining = 0f;
+        player.VerticalVelocity = 0f;
+        player.Z = 0f;
+    }
+
+    private static void ClearInput(PlayerState player)
+    {
+        player.Horizontal = 0;
+        player.Depth = 0;
+        player.HeldActions = InputActionFlags.None;
+        player.PendingAttack = false;
+        player.PendingJump = false;
+    }
+
     private sealed class PlayerState(int playerId, float x, float y)
     {
         public int PlayerId { get; } = playerId;
@@ -247,6 +330,10 @@ public sealed class GameWorld
         public float AttackTimeRemaining { get; set; }
 
         public float AttackCooldownRemaining { get; set; }
+
+        public int Health { get; set; } = GameProtocol.MaxHealth;
+
+        public bool IsDead => Health == 0;
 
         public FacingDirection Facing { get; set; } = FacingDirection.Right;
 

@@ -9,8 +9,11 @@ public static class GamePacketCodec
     private const int JoinRejectedSize = HeaderSize + sizeof(byte);
     private const int InputCommandSize = HeaderSize + sizeof(uint) + 3;
     private const int WorldSnapshotHeaderSize = HeaderSize + sizeof(long) + sizeof(byte);
-    private const int PlayerSnapshotSize =
-        sizeof(int) + (3 * sizeof(float)) + sizeof(byte) + sizeof(byte);
+    private const int PlayerFacingOffset = sizeof(int) + (3 * sizeof(float));
+    private const int PlayerAttackingOffset = PlayerFacingOffset + sizeof(byte);
+    private const int PlayerHealthOffset = PlayerAttackingOffset + sizeof(byte);
+    private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
+    private const int PlayerSnapshotSize = PlayerDeadOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
         InputActionFlags.Attack | InputActionFlags.Jump | InputActionFlags.ReservedZ;
 
@@ -152,10 +155,14 @@ public static class GamePacketCodec
             BinaryPrimitives.WriteInt32LittleEndian(
                 payload.AsSpan(offset + sizeof(int) + (2 * sizeof(float))),
                 BitConverter.SingleToInt32Bits(player.Z));
-            payload[offset + sizeof(int) + (3 * sizeof(float))] =
+            payload[offset + PlayerFacingOffset] =
                 unchecked((byte)(sbyte)player.Facing);
-            payload[offset + sizeof(int) + (3 * sizeof(float)) + 1] =
+            payload[offset + PlayerAttackingOffset] =
                 player.IsAttacking ? (byte)1 : (byte)0;
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + PlayerHealthOffset),
+                player.Health);
+            payload[offset + PlayerDeadOffset] = player.IsDead ? (byte)1 : (byte)0;
             offset += PlayerSnapshotSize;
         }
 
@@ -206,11 +213,19 @@ public static class GamePacketCodec
                 BinaryPrimitives.ReadInt32LittleEndian(
                     payload[(offset + sizeof(int) + (2 * sizeof(float)))..]));
             var facing = (FacingDirection)unchecked(
-                (sbyte)payload[offset + sizeof(int) + (3 * sizeof(float))]);
-            var attackingValue = payload[offset + sizeof(int) + (3 * sizeof(float)) + 1];
+                (sbyte)payload[offset + PlayerFacingOffset]);
+            var attackingValue = payload[offset + PlayerAttackingOffset];
             if (attackingValue > 1)
             {
                 throw new InvalidDataException("Invalid attacking state value.");
+            }
+
+            var health = BinaryPrimitives.ReadInt32LittleEndian(
+                payload[(offset + PlayerHealthOffset)..]);
+            var deadValue = payload[offset + PlayerDeadOffset];
+            if (deadValue > 1)
+            {
+                throw new InvalidDataException("Invalid dead state value.");
             }
 
             players[index] = new PlayerSnapshot(
@@ -219,7 +234,9 @@ public static class GamePacketCodec
                 y,
                 z,
                 facing,
-                attackingValue == 1);
+                attackingValue == 1,
+                health,
+                deadValue == 1);
             offset += PlayerSnapshotSize;
         }
 
@@ -298,6 +315,16 @@ public static class GamePacketCodec
             if (!Enum.IsDefined(player.Facing))
             {
                 throw createException($"Invalid facing direction: {player.Facing}.");
+            }
+
+            if (player.Health is < 0 or > GameProtocol.MaxHealth)
+            {
+                throw createException($"Invalid player health: {player.Health}.");
+            }
+
+            if (player.IsDead != (player.Health == 0))
+            {
+                throw createException("Player dead state does not match health.");
             }
         }
     }

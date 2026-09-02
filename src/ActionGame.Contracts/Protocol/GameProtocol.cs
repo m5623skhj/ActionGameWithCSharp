@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 2;
+    public const byte Version = 3;
     public const int MaxPlayers = 2;
     public const float WorldWidth = 800f;
     public const float WorldHeight = 450f;
@@ -16,6 +16,10 @@ public static class GameProtocol
     public const float AttackDuration = 0.18f;
     public const float AttackCooldown = 0.30f;
     public const float AttackReach = 42f;
+    public const float AttackDepthTolerance = 24f;
+    public const float AttackHeightTolerance = 48f;
+    public const int MaxHealth = 100;
+    public const int AttackDamage = 20;
     public const int SimulationRate = 20;
     public const int DefaultPort = 7777;
 }
@@ -67,6 +71,8 @@ public readonly record struct PlayerSnapshot(
     float Y,
     float Z,
     FacingDirection Facing,
-    bool IsAttacking);
+    bool IsAttacking,
+    int Health,
+    bool IsDead);
 
 public sealed record WorldSnapshotPacket(long ServerTick, PlayerSnapshot[] Players);
