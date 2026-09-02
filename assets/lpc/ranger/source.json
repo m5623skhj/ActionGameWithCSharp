@@ -1,0 +1,19 @@
+{
+  "generator": "Universal LPC Spritesheet Character Generator",
+  "generatorRepository": "https://github.com/liberatedpixelcup/Universal-LPC-Spritesheet-Character-Generator",
+  "configurationUrl": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=female&body=Body_Color_light&head=Human_Female_light&expression=Neutral_light&armour=Leather_forest&hair=High_ponytail_redhead&legs=Long_Pants_brown&shoes=Basic_Boots_brown&weapon=Normal_dark&ammo=Ammo_arrow",
+  "distributionLicense": "OGA-BY 3.0",
+  "creditsFile": "CREDITS.txt",
+  "selections": {
+    "sex": "female",
+    "body": "Body Color - light",
+    "head": "Human Female - light",
+    "expression": "Neutral - light",
+    "armour": "Leather - forest",
+    "hair": "High ponytail - redhead",
+    "legs": "Long Pants - brown",
+    "shoes": "Basic Boots - brown",
+    "weapon": "Normal Bow - dark",
+    "ammo": "Arrow"
+  }
+}

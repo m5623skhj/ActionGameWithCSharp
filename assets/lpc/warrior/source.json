@@ -1,0 +1,18 @@
+{
+  "generator": "Universal LPC Spritesheet Character Generator",
+  "generatorRepository": "https://github.com/liberatedpixelcup/Universal-LPC-Spritesheet-Character-Generator",
+  "configurationUrl": "https://liberatedpixelcup.github.io/Universal-LPC-Spritesheet-Character-Generator/#sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&armour=Plate_steel&hair=Halfmessy_dark_brown&legs=Long_Pants_black&shoes=Basic_Boots_black&weapon=Arming_Sword_steel",
+  "distributionLicense": "OGA-BY 3.0",
+  "creditsFile": "CREDITS.txt",
+  "selections": {
+    "sex": "male",
+    "body": "Body Color - light",
+    "head": "Human Male - light",
+    "expression": "Neutral - light",
+    "armour": "Plate - steel",
+    "hair": "Halfmessy - dark brown",
+    "legs": "Long Pants - black",
+    "shoes": "Basic Boots - black",
+    "weapon": "Arming Sword - steel"
+  }
+}
