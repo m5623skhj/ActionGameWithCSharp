@@ -14,3 +14,6 @@ The generated spritesheets may be used and modified under that license. The gene
 - `ranger/ranger.png`: female ranger with forest leather armour, red high ponytail, brown trousers and boots, a dark bow, and an arrow layer.
 
 The exact generator URL and selected layers are recorded in each character's `source.json`.
+The `animations` directories contain the idle, walk, jump, and character-specific attack
+sheets exported by the generator's split-by-animation download. The game client loads these
+files directly at startup.

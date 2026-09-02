@@ -16,6 +16,7 @@ public sealed class ActionGameClientGame : Game
     private readonly Dictionary<int, PlayerSnapshot> players = [];
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
+    private LpcCharacterRenderer? characterRenderer;
     private int? localPlayerId;
     private uint inputSequence;
     private double inputAccumulator;
@@ -63,6 +64,7 @@ public sealed class ActionGameClientGame : Game
         spriteBatch = new SpriteBatch(GraphicsDevice);
         pixel = new Texture2D(GraphicsDevice, 1, 1);
         pixel.SetData([Color.White]);
+        characterRenderer = LpcCharacterRenderer.Load(GraphicsDevice);
     }
 
     protected override void Update(GameTime gameTime)
@@ -75,6 +77,7 @@ public sealed class ActionGameClientGame : Game
         }
 
         DrainNetworkEvents();
+        characterRenderer?.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
         CaptureActionPresses(keyboard);
         QueueInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
         previousKeyboard = keyboard;
@@ -95,9 +98,6 @@ public sealed class ActionGameClientGame : Game
             .OrderBy(player => player.Y)
             .ThenBy(player => player.PlayerId))
         {
-            var color = player.PlayerId == localPlayerId
-                ? new Color(80, 220, 120)
-                : new Color(245, 150, 70);
             var shadowRectangle = new Rectangle(
                 (int)MathF.Round(player.X - (GameProtocol.PlayerSize * 0.6f)),
                 (int)MathF.Round(player.Y - 4f),
@@ -105,28 +105,17 @@ public sealed class ActionGameClientGame : Game
                 8);
             spriteBatch.Draw(pixel, shadowRectangle, new Color(0, 0, 0, 110));
 
-            var screenY = player.Y - player.Z;
-            if (player.IsAttacking)
+            if (player.PlayerId == localPlayerId)
             {
-                var attackWidth = (int)MathF.Round(GameProtocol.AttackReach);
-                var attackX = player.Facing == FacingDirection.Right
-                    ? (int)MathF.Round(player.X + (GameProtocol.PlayerSize / 2f))
-                    : (int)MathF.Round(
-                        player.X - (GameProtocol.PlayerSize / 2f) - attackWidth);
-                var attackRectangle = new Rectangle(
-                    attackX,
-                    (int)MathF.Round(screenY - 8f),
-                    attackWidth,
-                    16);
-                spriteBatch.Draw(pixel, attackRectangle, new Color(255, 220, 80, 170));
+                var markerRectangle = new Rectangle(
+                    (int)MathF.Round(player.X - 9f),
+                    (int)MathF.Round(player.Y + 5f),
+                    18,
+                    3);
+                spriteBatch.Draw(pixel, markerRectangle, new Color(80, 220, 120));
             }
 
-            var rectangle = new Rectangle(
-                (int)MathF.Round(player.X - (GameProtocol.PlayerSize / 2f)),
-                (int)MathF.Round(screenY - (GameProtocol.PlayerSize / 2f)),
-                (int)GameProtocol.PlayerSize,
-                (int)GameProtocol.PlayerSize);
-            spriteBatch.Draw(pixel, rectangle, color);
+            characterRenderer?.Draw(spriteBatch, player);
         }
 
         spriteBatch.End();
@@ -151,6 +140,7 @@ public sealed class ActionGameClientGame : Game
         if (disposing)
         {
             pixel?.Dispose();
+            characterRenderer?.Dispose();
             spriteBatch?.Dispose();
             shutdown.Dispose();
         }
@@ -181,6 +171,7 @@ public sealed class ActionGameClientGame : Game
                 case DisconnectedClientEvent disconnected:
                     localPlayerId = null;
                     players.Clear();
+                    characterRenderer?.Reset();
                     connectionStatus = $"Disconnected: {disconnected.Message}";
                     break;
             }
@@ -197,6 +188,7 @@ public sealed class ActionGameClientGame : Game
         }
 
         latestServerTick = snapshot.ServerTick;
+        characterRenderer?.ApplySnapshot(snapshot.Players);
         players.Clear();
         foreach (var player in snapshot.Players)
         {
