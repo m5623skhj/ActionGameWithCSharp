@@ -18,7 +18,7 @@ MonoGame와 `CSharpServer.Networking`으로 만든 2인용 TCP 네트워크 액�
 
 ## 요구 사항
 
-- .NET SDK 10.0.200 이상 호환 패치 버전
+- .NET 10 SDK 10.0.200 이상
 - `CSharpServer.Networking` 0.1.0 로컬 NuGet 패키지
 
 ## 로컬 NuGet 패키지 준비
@@ -45,6 +45,21 @@ dotnet test .\tests\ActionGame.Tests\ActionGame.Tests.csproj --configuration Deb
 ```
 
 ## 실행
+
+저장소 루트의 배치 파일을 실행하면 Debug 빌드 후 서버 1개와 클라이언트 2개가
+자동으로 시작됩니다.
+
+```powershell
+.\run-game.bat
+```
+
+기본 포트는 `7777`입니다. 다른 포트를 사용하려면 첫 번째 인자로 전달합니다.
+
+```powershell
+.\run-game.bat 7788
+```
+
+배치 파일을 사용하지 않고 각각 실행하려면 다음 명령을 사용합니다.
 
 먼저 서버를 실행합니다. 서버는 외부 네트워크에 노출되지 않도록 loopback 주소에만
 바인딩됩니다.

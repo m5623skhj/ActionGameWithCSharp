@@ -13,6 +13,9 @@ internal sealed class LpcCharacterRenderer : IDisposable
     private const float JumpFrameDuration = 0.12f;
     private static readonly int[] IdleFrames = [0, 0, 1];
     private static readonly int[] JumpFrames = [0, 1, 2, 3, 4, 1];
+    private static readonly Vector2 StandardOrigin = new(32f, 56f);
+    private static readonly Vector2 OversizedAttackOrigin =
+        StandardOrigin + new Vector2(32f, 32f);
 
     private readonly Dictionary<int, PlayerAnimationState> playerStates = [];
     private readonly CharacterSprites warrior;
@@ -33,7 +36,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
             "Warrior",
             attackFrameSize: 128,
             attackFrameCount: 6,
-            attackOrigin: new Vector2(64f, 64f));
+            attackOrigin: OversizedAttackOrigin);
         try
         {
             var ranger = CharacterSprites.Load(
@@ -41,7 +44,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
                 "Ranger",
                 attackFrameSize: StandardFrameSize,
                 attackFrameCount: 13,
-                attackOrigin: new Vector2(32f, 56f));
+                attackOrigin: StandardOrigin);
             return new LpcCharacterRenderer(warrior, ranger);
         }
         catch
@@ -117,7 +120,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
             frameSize);
         var origin = state.Animation == CharacterAnimation.Attack
             ? sprites.AttackOrigin
-            : new Vector2(32f, 56f);
+            : StandardOrigin;
         var groundPosition = new Vector2(player.X, player.Y - player.Z);
 
         spriteBatch.Draw(
