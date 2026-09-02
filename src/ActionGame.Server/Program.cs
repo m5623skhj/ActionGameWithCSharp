@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using ActionGame.Contracts.Protocol;
 using ActionGame.Server;
 
@@ -17,7 +18,18 @@ Console.CancelKeyPress += (_, eventArgs) =>
 };
 
 using var server = new GameServerHost(IPAddress.Loopback, port);
-server.Start();
+try
+{
+    server.Start();
+}
+catch (SocketException exception)
+    when (exception.SocketErrorCode == SocketError.AddressAlreadyInUse)
+{
+    Console.Error.WriteLine(
+        $"Unable to start server: 127.0.0.1:{port} is already in use.");
+    return 2;
+}
+
 Console.WriteLine($"Action game server listening on 127.0.0.1:{server.Port}.");
 Console.WriteLine("Press Ctrl+C to stop.");
 await server.RunAsync(shutdown.Token);

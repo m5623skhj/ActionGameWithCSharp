@@ -76,6 +76,9 @@ dotnet run --project .\src\ActionGame.Server\ActionGame.Server.csproj -- 7788
 dotnet run --project .\src\ActionGame.Client\ActionGame.Client.csproj -- 127.0.0.1 7788
 ```
 
+이미 사용 중인 서버 포트로 다시 실행하면 서버는 Windows 오류 대화상자를 표시하지 않고
+해당 포트가 사용 중이라는 메시지와 종료 코드 `2`를 반환합니다.
+
 ## 구조와 동시성 경계
 
 - `ActionGame.Contracts`: 게임 패킷 종류, 데이터와 바이너리 코덱

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using ActionGame.Contracts.Protocol;
 using ActionGame.Server;
 
@@ -6,6 +8,45 @@ namespace ActionGame.Tests.Integration;
 
 public sealed class GameServerIntegrationTest
 {
+    [Fact]
+    public async Task OccupiedPortExitsCleanlyWithoutUnhandledException()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, port: 0)
+        {
+            ExclusiveAddressUse = true,
+        };
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var serverPath = Path.Combine(AppContext.BaseDirectory, "ActionGame.Server.exe");
+        var startInfo = new ProcessStartInfo(serverPath, port.ToString())
+        {
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start the server process.");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+
+        var standardError = await process.StandardError.ReadToEndAsync();
+        Assert.Equal(2, process.ExitCode);
+        Assert.Contains("already in use", standardError);
+        Assert.DoesNotContain("Unhandled exception", standardError);
+    }
+
     [Fact]
     public async Task TwoClientsObserveAuthoritativeMovementAndLeave()
     {
