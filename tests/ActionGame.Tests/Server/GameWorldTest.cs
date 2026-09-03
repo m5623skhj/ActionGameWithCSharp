@@ -363,6 +363,41 @@ public sealed class GameWorldTest
     }
 
     [Fact]
+    public void ReviveCountdownUsesRecordedServerDeathTime()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        KillSecondPlayer(world);
+
+        var dead = Assert.Single(
+            world.CreateSnapshot().Players,
+            player => player.PlayerId == GameProtocol.RangerPlayerId);
+        Assert.Equal(5, dead.ReviveSecondsRemaining);
+
+        for (var index = 0; index < GameProtocol.SimulationRate; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        var afterOneSecond = Assert.Single(
+            world.CreateSnapshot().Players,
+            player => player.PlayerId == GameProtocol.RangerPlayerId);
+        Assert.Equal(4, afterOneSecond.ReviveSecondsRemaining);
+
+        for (var index = GameProtocol.SimulationRate;
+            index < GameProtocol.ReviveDelaySeconds * GameProtocol.SimulationRate;
+            index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        var ready = Assert.Single(
+            world.CreateSnapshot().Players,
+            player => player.PlayerId == GameProtocol.RangerPlayerId);
+        Assert.True(ready.IsDead);
+        Assert.Equal(0, ready.ReviveSecondsRemaining);
+    }
+
+    [Fact]
     public void ReviveRequiresNewRequestAfterDelayAndRestoresPlayer()
     {
         var world = CreateWorldWithPlayersInAttackRange();

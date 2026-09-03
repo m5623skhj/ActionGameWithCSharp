@@ -15,7 +15,8 @@ public static class GamePacketCodec
     private const int PlayerAttackingOffset = PlayerFacingOffset + sizeof(byte);
     private const int PlayerHealthOffset = PlayerAttackingOffset + sizeof(byte);
     private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
-    private const int PlayerSnapshotSize = PlayerDeadOffset + sizeof(byte);
+    private const int PlayerReviveSecondsOffset = PlayerDeadOffset + sizeof(byte);
+    private const int PlayerSnapshotSize = PlayerReviveSecondsOffset + sizeof(byte);
     private const int ArrowDirectionOffset = (2 * sizeof(int)) + (3 * sizeof(float));
     private const int ArrowSnapshotSize = ArrowDirectionOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
@@ -183,6 +184,7 @@ public static class GamePacketCodec
                 payload.AsSpan(offset + PlayerHealthOffset),
                 player.Health);
             payload[offset + PlayerDeadOffset] = player.IsDead ? (byte)1 : (byte)0;
+            payload[offset + PlayerReviveSecondsOffset] = player.ReviveSecondsRemaining;
             offset += PlayerSnapshotSize;
         }
 
@@ -284,7 +286,8 @@ public static class GamePacketCodec
                 facing,
                 attackingValue == 1,
                 health,
-                deadValue == 1);
+                deadValue == 1,
+                payload[offset + PlayerReviveSecondsOffset]);
             offset += PlayerSnapshotSize;
         }
 
@@ -404,6 +407,17 @@ public static class GamePacketCodec
             if (player.IsDead != (player.Health == 0))
             {
                 throw createException("Player dead state does not match health.");
+            }
+
+            if (player.ReviveSecondsRemaining > GameProtocol.ReviveDelaySeconds)
+            {
+                throw createException(
+                    $"Invalid revive countdown: {player.ReviveSecondsRemaining}.");
+            }
+
+            if (!player.IsDead && player.ReviveSecondsRemaining != 0)
+            {
+                throw createException("A living player cannot have a revive countdown.");
             }
         }
     }

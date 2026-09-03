@@ -18,6 +18,7 @@ public sealed class ActionGameClientGame : Game
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
     private LpcCharacterRenderer? characterRenderer;
+    private RevivePromptRenderer? revivePromptRenderer;
     private int? localPlayerId;
     private uint inputSequence;
     private double inputAccumulator;
@@ -66,6 +67,7 @@ public sealed class ActionGameClientGame : Game
         pixel = new Texture2D(GraphicsDevice, 1, 1);
         pixel.SetData([Color.White]);
         characterRenderer = LpcCharacterRenderer.Load(GraphicsDevice);
+        revivePromptRenderer = RevivePromptRenderer.Load(GraphicsDevice);
     }
 
     protected override void Update(GameTime gameTime)
@@ -125,6 +127,12 @@ public sealed class ActionGameClientGame : Game
             DrawArrow(spriteBatch, pixel, arrow);
         }
 
+        if (localPlayerId.HasValue
+            && players.TryGetValue(localPlayerId.Value, out var localPlayer))
+        {
+            revivePromptRenderer?.Draw(spriteBatch, pixel, localPlayer);
+        }
+
         spriteBatch.End();
         base.Draw(gameTime);
     }
@@ -148,6 +156,7 @@ public sealed class ActionGameClientGame : Game
         {
             pixel?.Dispose();
             characterRenderer?.Dispose();
+            revivePromptRenderer?.Dispose();
             spriteBatch?.Dispose();
             shutdown.Dispose();
         }

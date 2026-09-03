@@ -225,7 +225,8 @@ public sealed class GameWorld
                 player.Facing,
                 player.AttackTimeRemaining > 0f,
                 player.Health,
-                player.IsDead))
+                player.IsDead,
+                GetReviveSecondsRemaining(player)))
             .ToArray();
         var arrowSnapshots = arrows
             .OrderBy(arrow => arrow.ArrowId)
@@ -252,7 +253,8 @@ public sealed class GameWorld
                 state.Facing,
                 state.AttackTimeRemaining > 0f,
                 state.Health,
-                state.IsDead);
+                state.IsDead,
+                GetReviveSecondsRemaining(state));
             return true;
         }
 
@@ -465,6 +467,21 @@ public sealed class GameWorld
         return player.DeathTimeSeconds.HasValue
             && serverTimeSeconds - player.DeathTimeSeconds.Value
                 >= GameProtocol.ReviveDelaySeconds;
+    }
+
+    private byte GetReviveSecondsRemaining(PlayerState player)
+    {
+        if (!player.IsDead || !player.DeathTimeSeconds.HasValue)
+        {
+            return 0;
+        }
+
+        var remainingSeconds = GameProtocol.ReviveDelaySeconds
+            - (serverTimeSeconds - player.DeathTimeSeconds.Value);
+        return (byte)Math.Clamp(
+            (int)Math.Ceiling(remainingSeconds),
+            0,
+            GameProtocol.ReviveDelaySeconds);
     }
 
     private static void Revive(PlayerState player)

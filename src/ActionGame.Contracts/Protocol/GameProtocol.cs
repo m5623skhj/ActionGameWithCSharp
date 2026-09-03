@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 5;
+    public const byte Version = 6;
     public const int MaxPlayers = 2;
     public const int RangerPlayerId = 2;
     public const int MaxArrows = 16;
@@ -28,7 +28,7 @@ public static class GameProtocol
     public const float ArrowSpawnHeight = 28f;
     public const float ArrowDepthTolerance = 18f;
     public const float ArrowHeightTolerance = 32f;
-    public const float ReviveDelaySeconds = 5f;
+    public const int ReviveDelaySeconds = 5;
     public const int SimulationRate = 20;
     public const int DefaultPort = 7777;
 }
@@ -83,7 +83,8 @@ public readonly record struct PlayerSnapshot(
     FacingDirection Facing,
     bool IsAttacking,
     int Health,
-    bool IsDead);
+    bool IsDead,
+    byte ReviveSecondsRemaining);
 
 public readonly record struct ArrowSnapshot(
     int ArrowId,

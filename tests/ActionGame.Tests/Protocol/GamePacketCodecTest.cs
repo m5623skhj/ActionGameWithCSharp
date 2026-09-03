@@ -33,7 +33,8 @@ public sealed class GamePacketCodecTest
                     FacingDirection.Right,
                     true,
                     80,
-                    false),
+                    false,
+                    0),
                 new PlayerSnapshot(
                     2,
                     700f,
@@ -42,7 +43,8 @@ public sealed class GamePacketCodecTest
                     FacingDirection.Left,
                     false,
                     0,
-                    true),
+                    true,
+                    3),
             ],
             [
                 new ArrowSnapshot(
@@ -107,7 +109,8 @@ public sealed class GamePacketCodecTest
                     FacingDirection.Right,
                     false,
                     GameProtocol.MaxHealth,
-                    false),
+                    false,
+                    0),
                 new PlayerSnapshot(
                     1,
                     20f,
@@ -116,7 +119,8 @@ public sealed class GamePacketCodecTest
                     FacingDirection.Left,
                     false,
                     GameProtocol.MaxHealth,
-                    false),
+                    false,
+                    0),
             ],
             []);
 
@@ -138,7 +142,8 @@ public sealed class GamePacketCodecTest
                     FacingDirection.Right,
                     false,
                     0,
-                    false),
+                    false,
+                    0),
             ],
             []);
 
