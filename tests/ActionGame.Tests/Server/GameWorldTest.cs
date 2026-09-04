@@ -232,6 +232,105 @@ public sealed class GameWorldTest
     }
 
     [Fact]
+    public void MeleeKnockbackPushesTargetAndDecelerates()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.TryGetPlayer(20, out var beforeHit));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, -1, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var firstKnockbackTick));
+        Assert.True(firstKnockbackTick.X > beforeHit.X);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
+        for (var index = 0; index < 5; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(20, out var settled));
+        Assert.InRange(settled.X - beforeHit.X, 35f, 40f);
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var afterSettling));
+        Assert.Equal(settled.X, afterSettling.X);
+    }
+
+    [Fact]
+    public void ArrowKnockbackIsWeakerAndFollowsArrowDirection()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.TryGetPlayer(10, out var beforeHit));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(10, out var hit));
+        Assert.Equal(
+            GameProtocol.MaxHealth - GameProtocol.RangerAttackDamage,
+            hit.Health);
+        for (var index = 0; index < 4; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(10, out var settled));
+        Assert.InRange(beforeHit.X - settled.X, 14f, 16f);
+        Assert.True(
+            GameProtocol.ArrowKnockbackSpeed < GameProtocol.MeleeKnockbackSpeed);
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var afterSettling));
+        Assert.Equal(settled.X, afterSettling.X);
+    }
+
+    [Fact]
+    public void KnockbackStopsAtWorldBoundary()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.TryJoin(20, out _, out _));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
+        for (var index = 0; index < 100; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var atBoundary));
+        var maximumX = GameProtocol.WorldWidth - (GameProtocol.PlayerSize / 2f);
+        Assert.Equal(maximumX, atBoundary.X);
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var stillAtBoundary));
+        Assert.Equal(atBoundary.X, stillAtBoundary.X);
+    }
+
+    [Fact]
     public void AttackOutsideDepthRangeDoesNotDealDamage()
     {
         var world = CreateWorldWithPlayersInAttackRange();
@@ -551,10 +650,22 @@ public sealed class GameWorldTest
                 10,
                 new InputCommandPacket(
                     sequence++,
+                    1,
+                    0,
+                    InputActionFlags.None)));
+            for (var followTick = 0; followTick < 4; followTick++)
+            {
+                world.Update(TickSeconds);
+            }
+
+            Assert.True(world.ApplyInput(
+                10,
+                new InputCommandPacket(
+                    sequence++,
                     0,
                     0,
                     InputActionFlags.None)));
-            for (var cooldownTick = 0; cooldownTick < 7; cooldownTick++)
+            for (var cooldownTick = 4; cooldownTick < 7; cooldownTick++)
             {
                 world.Update(TickSeconds);
             }

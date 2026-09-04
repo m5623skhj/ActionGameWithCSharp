@@ -148,6 +148,7 @@ public sealed class GameWorld
                 player.AttackTimeRemaining = 0f;
                 player.AttackCooldownRemaining = 0f;
                 player.VerticalVelocity = 0f;
+                player.KnockbackVelocityX = 0f;
                 player.Z = 0f;
                 continue;
             }
@@ -186,10 +187,28 @@ public sealed class GameWorld
                 player.Facing = FacingDirection.Right;
             }
 
+            var inputVelocityX = player.KnockbackVelocityX == 0f
+                ? horizontal * GameProtocol.HorizontalSpeed
+                : 0f;
+            var nextX = player.X
+                + ((inputVelocityX + player.KnockbackVelocityX) * deltaSeconds);
             player.X = Math.Clamp(
-                player.X + (horizontal * GameProtocol.HorizontalSpeed * deltaSeconds),
+                nextX,
                 halfPlayerSize,
                 GameProtocol.WorldWidth - halfPlayerSize);
+            if ((player.X <= halfPlayerSize && player.KnockbackVelocityX < 0f)
+                || (player.X >= GameProtocol.WorldWidth - halfPlayerSize
+                    && player.KnockbackVelocityX > 0f))
+            {
+                player.KnockbackVelocityX = 0f;
+            }
+            else
+            {
+                player.KnockbackVelocityX = MoveTowardsZero(
+                    player.KnockbackVelocityX,
+                    GameProtocol.KnockbackDeceleration * deltaSeconds);
+            }
+
             player.Y = Math.Clamp(
                 player.Y + (depth * GameProtocol.DepthSpeed * deltaSeconds),
                 GameProtocol.FloorTop,
@@ -296,7 +315,7 @@ public sealed class GameWorld
 
     private void ResolveAttacks(IReadOnlyList<PlayerState> attackers)
     {
-        var pendingDamage = new Dictionary<PlayerState, int>();
+        var pendingHits = new Dictionary<PlayerState, PendingHit>();
         foreach (var attacker in attackers)
         {
             if (attacker.PlayerId == GameProtocol.RangerPlayerId)
@@ -314,14 +333,26 @@ public sealed class GameWorld
                     continue;
                 }
 
-                pendingDamage.TryGetValue(target, out var damage);
-                pendingDamage[target] = damage + GameProtocol.AttackDamage;
+                pendingHits.TryGetValue(target, out var hit);
+                var directionMultiplier = attacker.Facing == FacingDirection.Right
+                    ? 1f
+                    : -1f;
+                pendingHits[target] = new PendingHit(
+                    hit.Damage + GameProtocol.AttackDamage,
+                    hit.KnockbackVelocityX
+                        + (directionMultiplier * GameProtocol.MeleeKnockbackSpeed));
             }
         }
 
-        foreach (var pair in pendingDamage)
+        foreach (var pair in pendingHits)
         {
-            ApplyDamage(pair.Key, pair.Value);
+            ApplyDamage(
+                pair.Key,
+                pair.Value.Damage,
+                Math.Clamp(
+                    pair.Value.KnockbackVelocityX,
+                    -GameProtocol.MeleeKnockbackSpeed,
+                    GameProtocol.MeleeKnockbackSpeed));
         }
     }
 
@@ -363,7 +394,13 @@ public sealed class GameWorld
             var target = FindArrowTarget(arrow, previousX, nextX);
             if (target is not null)
             {
-                ApplyDamage(target, GameProtocol.RangerAttackDamage);
+                var knockbackVelocityX = arrow.Direction == FacingDirection.Right
+                    ? GameProtocol.ArrowKnockbackSpeed
+                    : -GameProtocol.ArrowKnockbackSpeed;
+                ApplyDamage(
+                    target,
+                    GameProtocol.RangerAttackDamage,
+                    knockbackVelocityX);
                 arrows.RemoveAt(index);
                 continue;
             }
@@ -446,11 +483,15 @@ public sealed class GameWorld
             && MathF.Abs(target.Z - attacker.Z) <= GameProtocol.AttackHeightTolerance;
     }
 
-    private void ApplyDamage(PlayerState player, int damage)
+    private void ApplyDamage(
+        PlayerState player,
+        int damage,
+        float knockbackVelocityX)
     {
         player.Health = Math.Max(0, player.Health - damage);
         if (!player.IsDead)
         {
+            player.KnockbackVelocityX = knockbackVelocityX;
             return;
         }
 
@@ -459,6 +500,7 @@ public sealed class GameWorld
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
+        player.KnockbackVelocityX = 0f;
         player.Z = 0f;
     }
 
@@ -492,7 +534,18 @@ public sealed class GameWorld
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
+        player.KnockbackVelocityX = 0f;
         player.Z = 0f;
+    }
+
+    private static float MoveTowardsZero(float value, float maximumDelta)
+    {
+        if (MathF.Abs(value) <= maximumDelta)
+        {
+            return 0f;
+        }
+
+        return value - (MathF.Sign(value) * maximumDelta);
     }
 
     private static void ClearControllableState(
@@ -526,6 +579,8 @@ public sealed class GameWorld
 
         public float VerticalVelocity { get; set; }
 
+        public float KnockbackVelocityX { get; set; }
+
         public float AttackTimeRemaining { get; set; }
 
         public float AttackCooldownRemaining { get; set; }
@@ -550,6 +605,8 @@ public sealed class GameWorld
 
         public bool HasInput { get; set; }
     }
+
+    private readonly record struct PendingHit(int Damage, float KnockbackVelocityX);
 
     private sealed class ArrowState(
         int arrowId,

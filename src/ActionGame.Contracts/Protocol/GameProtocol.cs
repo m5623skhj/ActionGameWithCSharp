@@ -23,6 +23,9 @@ public static class GameProtocol
     public const int MaxHealth = 100;
     public const int AttackDamage = 20;
     public const int RangerAttackDamage = 15;
+    public const float MeleeKnockbackSpeed = 240f;
+    public const float ArrowKnockbackSpeed = 140f;
+    public const float KnockbackDeceleration = 900f;
     public const float ArrowSpeed = 480f;
     public const float ArrowMaxDistance = 360f;
     public const float ArrowSpawnHeight = 28f;
