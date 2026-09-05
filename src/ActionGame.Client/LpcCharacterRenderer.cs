@@ -96,7 +96,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
         }
     }
 
-    public void Draw(SpriteBatch spriteBatch, PlayerSnapshot player)
+    public void Draw(SpriteBatch spriteBatch, PlayerSnapshot player, Color tint)
     {
         ArgumentNullException.ThrowIfNull(spriteBatch);
 
@@ -131,7 +131,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
             texture,
             groundPosition,
             sourceRectangle,
-            Color.White,
+            tint,
             0f,
             origin,
             1f,

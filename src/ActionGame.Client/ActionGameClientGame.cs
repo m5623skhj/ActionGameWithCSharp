@@ -14,6 +14,7 @@ public sealed class ActionGameClientGame : Game
     private readonly GameNetworkClient networkClient;
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<int, PlayerSnapshot> players = [];
+    private readonly HitVisualEffectRenderer hitVisualEffects = new();
     private ArrowSnapshot[] arrows = [];
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
@@ -80,7 +81,9 @@ public sealed class ActionGameClientGame : Game
         }
 
         DrainNetworkEvents();
-        characterRenderer?.Update((float)gameTime.ElapsedGameTime.TotalSeconds);
+        var elapsedSeconds = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        characterRenderer?.Update(elapsedSeconds);
+        hitVisualEffects.Update(elapsedSeconds);
         CaptureActionPresses(keyboard);
         QueueInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
         previousKeyboard = keyboard;
@@ -118,7 +121,10 @@ public sealed class ActionGameClientGame : Game
                 spriteBatch.Draw(pixel, markerRectangle, new Color(80, 220, 120));
             }
 
-            characterRenderer?.Draw(spriteBatch, player);
+            characterRenderer?.Draw(
+                spriteBatch,
+                player,
+                hitVisualEffects.GetCharacterTint(player.PlayerId));
             DrawHealthBar(spriteBatch, pixel, player);
         }
 
@@ -126,6 +132,8 @@ public sealed class ActionGameClientGame : Game
         {
             DrawArrow(spriteBatch, pixel, arrow);
         }
+
+        hitVisualEffects.Draw(spriteBatch, pixel);
 
         if (localPlayerId.HasValue
             && players.TryGetValue(localPlayerId.Value, out var localPlayer))
@@ -189,6 +197,7 @@ public sealed class ActionGameClientGame : Game
                     players.Clear();
                     arrows = [];
                     characterRenderer?.Reset();
+                    hitVisualEffects.Reset();
                     connectionStatus = $"Disconnected: {disconnected.Message}";
                     break;
             }
@@ -206,6 +215,7 @@ public sealed class ActionGameClientGame : Game
 
         latestServerTick = snapshot.ServerTick;
         characterRenderer?.ApplySnapshot(snapshot.Players);
+        hitVisualEffects.ApplySnapshot(snapshot.Players);
         players.Clear();
         foreach (var player in snapshot.Players)
         {
