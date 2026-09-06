@@ -34,7 +34,8 @@ public sealed class GamePacketCodecTest
                     true,
                     80,
                     false,
-                    0),
+                    0,
+                    true),
                 new PlayerSnapshot(
                     2,
                     700f,
@@ -44,7 +45,8 @@ public sealed class GamePacketCodecTest
                     false,
                     0,
                     true,
-                    3),
+                    3,
+                    false),
             ],
             [
                 new ArrowSnapshot(
@@ -110,7 +112,8 @@ public sealed class GamePacketCodecTest
                     false,
                     GameProtocol.MaxHealth,
                     false,
-                    0),
+                    0,
+                    false),
                 new PlayerSnapshot(
                     1,
                     20f,
@@ -120,7 +123,8 @@ public sealed class GamePacketCodecTest
                     false,
                     GameProtocol.MaxHealth,
                     false,
-                    0),
+                    0,
+                    false),
             ],
             []);
 
@@ -143,7 +147,8 @@ public sealed class GamePacketCodecTest
                     false,
                     0,
                     false,
-                    0),
+                    0,
+                    false),
             ],
             []);
 

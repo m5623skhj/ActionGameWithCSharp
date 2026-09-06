@@ -99,6 +99,13 @@ public sealed class GameWorld
             return true;
         }
 
+        if (player.HitStunTimeRemaining > 0f)
+        {
+            ClearControllableState(player, clearHeldActions: false);
+            player.HeldActions = input.Actions;
+            return true;
+        }
+
         player.Horizontal = input.Horizontal;
         player.Depth = input.Depth;
         var wasHoldingRevive =
@@ -134,6 +141,12 @@ public sealed class GameWorld
             player.AttackCooldownRemaining = Math.Max(
                 0f,
                 player.AttackCooldownRemaining - deltaSeconds);
+            player.HitStunTimeRemaining = Math.Max(
+                0f,
+                player.HitStunTimeRemaining - deltaSeconds);
+            player.InvulnerabilityTimeRemaining = Math.Max(
+                0f,
+                player.InvulnerabilityTimeRemaining - deltaSeconds);
             if (player.IsDead)
             {
                 var reviveRequested = player.PendingRevive;
@@ -149,24 +162,33 @@ public sealed class GameWorld
                 player.AttackCooldownRemaining = 0f;
                 player.VerticalVelocity = 0f;
                 player.KnockbackVelocityX = 0f;
+                player.HitStunTimeRemaining = 0f;
+                player.InvulnerabilityTimeRemaining = 0f;
                 player.Z = 0f;
                 continue;
             }
 
-            if (player.PendingJump && player.Z <= 0f)
+            if (player.HitStunTimeRemaining > 0f)
             {
-                player.VerticalVelocity = GameProtocol.JumpInitialVelocity;
+                ClearControllableState(player, clearHeldActions: false);
             }
-
-            if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
+            else
             {
-                player.AttackTimeRemaining = GameProtocol.AttackDuration;
-                player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
-                attackers.Add(player);
-            }
+                if (player.PendingJump && player.Z <= 0f)
+                {
+                    player.VerticalVelocity = GameProtocol.JumpInitialVelocity;
+                }
 
-            player.PendingJump = false;
-            player.PendingAttack = false;
+                if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
+                {
+                    player.AttackTimeRemaining = GameProtocol.AttackDuration;
+                    player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
+                    attackers.Add(player);
+                }
+
+                player.PendingJump = false;
+                player.PendingAttack = false;
+            }
 
             var horizontal = (float)player.Horizontal;
             var depth = (float)player.Depth;
@@ -245,7 +267,8 @@ public sealed class GameWorld
                 player.AttackTimeRemaining > 0f,
                 player.Health,
                 player.IsDead,
-                GetReviveSecondsRemaining(player)))
+                GetReviveSecondsRemaining(player),
+                player.InvulnerabilityTimeRemaining > 0f))
             .ToArray();
         var arrowSnapshots = arrows
             .OrderBy(arrow => arrow.ArrowId)
@@ -273,7 +296,8 @@ public sealed class GameWorld
                 state.AttackTimeRemaining > 0f,
                 state.Health,
                 state.IsDead,
-                GetReviveSecondsRemaining(state));
+                GetReviveSecondsRemaining(state),
+                state.InvulnerabilityTimeRemaining > 0f);
             return true;
         }
 
@@ -352,7 +376,8 @@ public sealed class GameWorld
                 Math.Clamp(
                     pair.Value.KnockbackVelocityX,
                     -GameProtocol.MeleeKnockbackSpeed,
-                    GameProtocol.MeleeKnockbackSpeed));
+                    GameProtocol.MeleeKnockbackSpeed),
+                GameProtocol.MeleeHitStunDuration);
         }
     }
 
@@ -400,7 +425,8 @@ public sealed class GameWorld
                 ApplyDamage(
                     target,
                     GameProtocol.RangerAttackDamage,
-                    knockbackVelocityX);
+                    knockbackVelocityX,
+                    GameProtocol.ArrowHitStunDuration);
                 arrows.RemoveAt(index);
                 continue;
             }
@@ -486,12 +512,23 @@ public sealed class GameWorld
     private void ApplyDamage(
         PlayerState player,
         int damage,
-        float knockbackVelocityX)
+        float knockbackVelocityX,
+        float hitStunDuration)
     {
+        if (player.InvulnerabilityTimeRemaining > 0f)
+        {
+            return;
+        }
+
         player.Health = Math.Max(0, player.Health - damage);
         if (!player.IsDead)
         {
+            ClearControllableState(player, clearHeldActions: false);
+            player.AttackTimeRemaining = 0f;
             player.KnockbackVelocityX = knockbackVelocityX;
+            player.HitStunTimeRemaining = hitStunDuration;
+            player.InvulnerabilityTimeRemaining =
+                GameProtocol.HitInvulnerabilityDuration;
             return;
         }
 
@@ -501,6 +538,8 @@ public sealed class GameWorld
         player.AttackCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
         player.KnockbackVelocityX = 0f;
+        player.HitStunTimeRemaining = 0f;
+        player.InvulnerabilityTimeRemaining = 0f;
         player.Z = 0f;
     }
 
@@ -535,6 +574,8 @@ public sealed class GameWorld
         player.AttackCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
         player.KnockbackVelocityX = 0f;
+        player.HitStunTimeRemaining = 0f;
+        player.InvulnerabilityTimeRemaining = 0f;
         player.Z = 0f;
     }
 
@@ -580,6 +621,10 @@ public sealed class GameWorld
         public float VerticalVelocity { get; set; }
 
         public float KnockbackVelocityX { get; set; }
+
+        public float HitStunTimeRemaining { get; set; }
+
+        public float InvulnerabilityTimeRemaining { get; set; }
 
         public float AttackTimeRemaining { get; set; }
 

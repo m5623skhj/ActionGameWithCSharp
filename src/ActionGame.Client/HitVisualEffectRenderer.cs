@@ -9,6 +9,7 @@ internal sealed class HitVisualEffectRenderer
     private const float FlashDuration = 0.15f;
     private const float ImpactDuration = 0.20f;
     private const float FlashInterval = 0.035f;
+    private const float InvulnerabilityFlashInterval = 0.06f;
     private static readonly Vector2[] BurstDirections =
     [
         new(1f, 0f),
@@ -23,6 +24,7 @@ internal sealed class HitVisualEffectRenderer
 
     private readonly Dictionary<int, int> lastHealthByPlayerId = [];
     private readonly Dictionary<int, HitEffect> effectsByPlayerId = [];
+    private float totalElapsedSeconds;
 
     public void ApplySnapshot(IReadOnlyList<PlayerSnapshot> players)
     {
@@ -61,6 +63,7 @@ internal sealed class HitVisualEffectRenderer
             throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
         }
 
+        totalElapsedSeconds += elapsedSeconds;
         foreach (var effect in effectsByPlayerId.Values)
         {
             effect.ElapsedSeconds += elapsedSeconds;
@@ -75,18 +78,29 @@ internal sealed class HitVisualEffectRenderer
         }
     }
 
-    public Color GetCharacterTint(int playerId)
+    public Color GetCharacterTint(PlayerSnapshot player)
     {
-        if (!effectsByPlayerId.TryGetValue(playerId, out var effect)
-            || effect.ElapsedSeconds >= FlashDuration)
+        var tint = Color.White;
+        if (effectsByPlayerId.TryGetValue(player.PlayerId, out var effect)
+            && effect.ElapsedSeconds < FlashDuration)
         {
-            return Color.White;
+            var flashIndex = (int)(effect.ElapsedSeconds / FlashInterval);
+            tint = flashIndex % 2 == 0
+                ? new Color(255, 105, 105)
+                : Color.White;
         }
 
-        var flashIndex = (int)(effect.ElapsedSeconds / FlashInterval);
-        return flashIndex % 2 == 0
-            ? new Color(255, 105, 105)
-            : Color.White;
+        if (player.IsInvulnerable)
+        {
+            var invulnerabilityFlashIndex = (int)(
+                totalElapsedSeconds / InvulnerabilityFlashInterval);
+            if (invulnerabilityFlashIndex % 2 != 0)
+            {
+                tint *= 0.35f;
+            }
+        }
+
+        return tint;
     }
 
     public void Draw(SpriteBatch spriteBatch, Texture2D pixel)
@@ -104,6 +118,7 @@ internal sealed class HitVisualEffectRenderer
     {
         lastHealthByPlayerId.Clear();
         effectsByPlayerId.Clear();
+        totalElapsedSeconds = 0f;
     }
 
     private static void DrawImpact(

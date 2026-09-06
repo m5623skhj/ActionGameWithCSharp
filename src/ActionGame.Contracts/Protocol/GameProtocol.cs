@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 6;
+    public const byte Version = 7;
     public const int MaxPlayers = 2;
     public const int RangerPlayerId = 2;
     public const int MaxArrows = 16;
@@ -26,6 +26,9 @@ public static class GameProtocol
     public const float MeleeKnockbackSpeed = 240f;
     public const float ArrowKnockbackSpeed = 140f;
     public const float KnockbackDeceleration = 900f;
+    public const float MeleeHitStunDuration = 0.25f;
+    public const float ArrowHitStunDuration = 0.12f;
+    public const float HitInvulnerabilityDuration = 0.30f;
     public const float ArrowSpeed = 480f;
     public const float ArrowMaxDistance = 360f;
     public const float ArrowSpawnHeight = 28f;
@@ -87,7 +90,8 @@ public readonly record struct PlayerSnapshot(
     bool IsAttacking,
     int Health,
     bool IsDead,
-    byte ReviveSecondsRemaining);
+    byte ReviveSecondsRemaining,
+    bool IsInvulnerable);
 
 public readonly record struct ArrowSnapshot(
     int ArrowId,

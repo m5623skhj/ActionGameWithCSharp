@@ -16,7 +16,8 @@ public static class GamePacketCodec
     private const int PlayerHealthOffset = PlayerAttackingOffset + sizeof(byte);
     private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
     private const int PlayerReviveSecondsOffset = PlayerDeadOffset + sizeof(byte);
-    private const int PlayerSnapshotSize = PlayerReviveSecondsOffset + sizeof(byte);
+    private const int PlayerInvulnerableOffset = PlayerReviveSecondsOffset + sizeof(byte);
+    private const int PlayerSnapshotSize = PlayerInvulnerableOffset + sizeof(byte);
     private const int ArrowDirectionOffset = (2 * sizeof(int)) + (3 * sizeof(float));
     private const int ArrowSnapshotSize = ArrowDirectionOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
@@ -185,6 +186,8 @@ public static class GamePacketCodec
                 player.Health);
             payload[offset + PlayerDeadOffset] = player.IsDead ? (byte)1 : (byte)0;
             payload[offset + PlayerReviveSecondsOffset] = player.ReviveSecondsRemaining;
+            payload[offset + PlayerInvulnerableOffset] =
+                player.IsInvulnerable ? (byte)1 : (byte)0;
             offset += PlayerSnapshotSize;
         }
 
@@ -278,6 +281,12 @@ public static class GamePacketCodec
                 throw new InvalidDataException("Invalid dead state value.");
             }
 
+            var invulnerableValue = payload[offset + PlayerInvulnerableOffset];
+            if (invulnerableValue > 1)
+            {
+                throw new InvalidDataException("Invalid invulnerable state value.");
+            }
+
             players[index] = new PlayerSnapshot(
                 playerId,
                 x,
@@ -287,7 +296,8 @@ public static class GamePacketCodec
                 attackingValue == 1,
                 health,
                 deadValue == 1,
-                payload[offset + PlayerReviveSecondsOffset]);
+                payload[offset + PlayerReviveSecondsOffset],
+                invulnerableValue == 1);
             offset += PlayerSnapshotSize;
         }
 
@@ -418,6 +428,11 @@ public static class GamePacketCodec
             if (!player.IsDead && player.ReviveSecondsRemaining != 0)
             {
                 throw createException("A living player cannot have a revive countdown.");
+            }
+
+            if (player.IsDead && player.IsInvulnerable)
+            {
+                throw createException("A dead player cannot be invulnerable.");
             }
         }
     }

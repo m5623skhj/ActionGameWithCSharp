@@ -124,7 +124,7 @@ public sealed class ActionGameClientGame : Game
             characterRenderer?.Draw(
                 spriteBatch,
                 player,
-                hitVisualEffects.GetCharacterTint(player.PlayerId));
+                hitVisualEffects.GetCharacterTint(player));
             DrawHealthBar(spriteBatch, pixel, player);
         }
 

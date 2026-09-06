@@ -264,6 +264,86 @@ public sealed class GameWorldTest
     }
 
     [Fact]
+    public void HitStunBlocksActionsAndRequiresANewButtonPress()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.TryGetPlayer(20, out var beforeHit));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+
+        var heldActions = InputActionFlags.Attack | InputActionFlags.Jump;
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, -1, 1, heldActions)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var stunned));
+        Assert.Equal(beforeHit.Y, stunned.Y);
+        Assert.Equal(0f, stunned.Z);
+        Assert.False(stunned.IsAttacking);
+        Assert.Empty(world.CreateSnapshot().Arrows);
+
+        var stunTicks = (int)MathF.Ceiling(
+            GameProtocol.MeleeHitStunDuration / TickSeconds) + 1;
+        for (var index = 1; index < stunTicks; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(4, 0, 0, heldActions)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var stillHeld));
+        Assert.Equal(0f, stillHeld.Z);
+        Assert.False(stillHeld.IsAttacking);
+        Assert.Empty(world.CreateSnapshot().Arrows);
+
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(5, 0, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(6, 0, 0, heldActions)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var recovered));
+        Assert.True(recovered.Z > 0f);
+        Assert.True(recovered.IsAttacking);
+        Assert.Single(world.CreateSnapshot().Arrows);
+    }
+
+    [Fact]
+    public void InvulnerabilityStateExpiresAfterServerDuration()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+        world.Update(TickSeconds);
+
+        Assert.True(world.TryGetPlayer(20, out var protectedPlayer));
+        Assert.True(protectedPlayer.IsInvulnerable);
+
+        var protectedTicks = (int)MathF.Ceiling(
+            GameProtocol.HitInvulnerabilityDuration / TickSeconds) - 1;
+        for (var index = 0; index < protectedTicks; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.TryGetPlayer(20, out var stillProtected));
+        Assert.True(stillProtected.IsInvulnerable);
+
+        world.Update(TickSeconds);
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(20, out var expired));
+        Assert.False(expired.IsInvulnerable);
+    }
+
+    [Fact]
     public void ArrowKnockbackIsWeakerAndFollowsArrowDirection()
     {
         var world = CreateWorldWithPlayersInAttackRange();
@@ -426,6 +506,7 @@ public sealed class GameWorldTest
         Assert.Equal(0, dead.Health);
         Assert.True(dead.IsDead);
         Assert.False(dead.IsAttacking);
+        Assert.False(dead.IsInvulnerable);
 
         Assert.True(world.ApplyInput(
             20,
