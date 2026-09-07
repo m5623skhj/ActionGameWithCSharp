@@ -23,6 +23,7 @@ public sealed class ActionGameClientGame : Game
     private Texture2D? pixel;
     private LpcCharacterRenderer? characterRenderer;
     private RevivePromptRenderer? revivePromptRenderer;
+    private SkillBarRenderer? skillBarRenderer;
     private int? localPlayerId;
     private uint movementSequence;
     private uint actionSequence;
@@ -72,6 +73,7 @@ public sealed class ActionGameClientGame : Game
         pixel.SetData([Color.White]);
         characterRenderer = LpcCharacterRenderer.Load(GraphicsDevice);
         revivePromptRenderer = RevivePromptRenderer.Load(GraphicsDevice);
+        skillBarRenderer = SkillBarRenderer.Load(GraphicsDevice);
     }
 
     protected override void Update(GameTime gameTime)
@@ -142,7 +144,7 @@ public sealed class ActionGameClientGame : Game
             && players.TryGetValue(localPlayerId.Value, out var localPlayer))
         {
             revivePromptRenderer?.Draw(spriteBatch, pixel, localPlayer);
-            DrawSkillCooldown(spriteBatch, pixel, localPlayer);
+            skillBarRenderer?.Draw(spriteBatch, pixel, localPlayer);
         }
 
         spriteBatch.End();
@@ -169,6 +171,7 @@ public sealed class ActionGameClientGame : Game
             pixel?.Dispose();
             characterRenderer?.Dispose();
             revivePromptRenderer?.Dispose();
+            skillBarRenderer?.Dispose();
             spriteBatch?.Dispose();
             shutdown.Dispose();
         }
@@ -489,57 +492,4 @@ public sealed class ActionGameClientGame : Game
             new Color(180, 65, 55));
     }
 
-    private static void DrawSkillCooldown(
-        SpriteBatch spriteBatch,
-        Texture2D pixel,
-        PlayerSnapshot player)
-    {
-        if (player.IsDead)
-        {
-            return;
-        }
-
-        const int x = 18;
-        const int y = (int)GameProtocol.WorldHeight - 24;
-        const int width = 124;
-        const int height = 10;
-        var readyRatio = 1f - Math.Clamp(
-            player.SkillCooldownRemaining / GameProtocol.SkillCooldown,
-            0f,
-            1f);
-        var fillWidth = (int)MathF.Round((width - 4) * readyRatio);
-        spriteBatch.Draw(
-            pixel,
-            new Rectangle(x, y, width, height),
-            new Color(12, 15, 20, 220));
-        if (fillWidth > 0)
-        {
-            var color = player.SkillCooldownRemaining <= 0f
-                ? new Color(80, 225, 145)
-                : new Color(70, 150, 215);
-            spriteBatch.Draw(pixel, new Rectangle(x + 2, y + 2, fillWidth, height - 4), color);
-        }
-
-        DrawPixelZ(
-            spriteBatch,
-            pixel,
-            x + width + 7,
-            y,
-            player.SkillCooldownRemaining <= 0f);
-    }
-
-    private static void DrawPixelZ(
-        SpriteBatch spriteBatch,
-        Texture2D pixel,
-        int x,
-        int y,
-        bool isReady)
-    {
-        var color = isReady ? new Color(235, 255, 240) : new Color(120, 130, 145);
-        spriteBatch.Draw(pixel, new Rectangle(x, y, 9, 2), color);
-        spriteBatch.Draw(pixel, new Rectangle(x + 6, y + 2, 3, 2), color);
-        spriteBatch.Draw(pixel, new Rectangle(x + 3, y + 4, 3, 2), color);
-        spriteBatch.Draw(pixel, new Rectangle(x, y + 6, 3, 2), color);
-        spriteBatch.Draw(pixel, new Rectangle(x, y + 8, 9, 2), color);
-    }
 }
