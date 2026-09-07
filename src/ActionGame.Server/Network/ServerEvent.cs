@@ -9,9 +9,13 @@ internal sealed record JoinServerEvent(
     long ConnectionId,
     IConnectionSender Sender) : ServerEvent;
 
-internal sealed record InputServerEvent(
+internal sealed record MovementInputServerEvent(
     long ConnectionId,
-    InputCommandPacket Input) : ServerEvent;
+    MovementInputPacket Input) : ServerEvent;
+
+internal sealed record ActionCommandServerEvent(
+    long ConnectionId,
+    ActionCommandPacket Command) : ServerEvent;
 
 internal sealed record LeaveServerEvent(long ConnectionId) : ServerEvent;
 
@@ -20,4 +24,3 @@ internal sealed record ConnectionLostServerEvent(
     Exception? Exception) : ServerEvent;
 
 internal sealed record TickServerEvent : ServerEvent;
-

@@ -4,6 +4,8 @@ public enum CommandInput
 {
     Down,
     Forward,
+    BasicAttack,
+    Jump,
     Skill,
 }
 

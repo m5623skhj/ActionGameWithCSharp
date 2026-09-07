@@ -31,9 +31,12 @@ internal sealed class GameConnectionPacketHandler(
         return GamePacketCodec.ReadPacketType(payload) switch
         {
             PacketType.JoinRequest => DecodeJoinRequest(sender, payload),
-            PacketType.InputCommand => new InputServerEvent(
+            PacketType.MovementInput => new MovementInputServerEvent(
                 connectionId,
-                GamePacketCodec.DecodeInputCommand(payload)),
+                GamePacketCodec.DecodeMovementInput(payload)),
+            PacketType.ActionCommand => new ActionCommandServerEvent(
+                connectionId,
+                GamePacketCodec.DecodeActionCommand(payload)),
             PacketType.LeaveRequest => DecodeLeaveRequest(payload),
             var packetType => throw new InvalidDataException(
                 $"Client sent disallowed packet type: {packetType}."),
@@ -52,4 +55,3 @@ internal sealed class GameConnectionPacketHandler(
         return new LeaveServerEvent(connectionId);
     }
 }
-

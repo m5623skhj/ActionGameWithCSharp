@@ -7,7 +7,8 @@ public static class GamePacketCodec
     private const int HeaderSize = 2;
     private const int JoinAcceptedSize = HeaderSize + sizeof(int);
     private const int JoinRejectedSize = HeaderSize + sizeof(byte);
-    private const int InputCommandSize = HeaderSize + sizeof(uint) + 3;
+    private const int MovementInputSize = HeaderSize + sizeof(uint) + 2;
+    private const int ActionCommandSize = HeaderSize + sizeof(uint) + sizeof(ushort);
     private const int PlayerCountOffset = HeaderSize + sizeof(long);
     private const int ArrowCountOffset = PlayerCountOffset + sizeof(byte);
     private const int WorldSnapshotHeaderSize = ArrowCountOffset + sizeof(byte);
@@ -22,11 +23,6 @@ public static class GamePacketCodec
     private const int ArrowDirectionOffset = (2 * sizeof(int)) + (3 * sizeof(float));
     private const int ArrowSkillOffset = ArrowDirectionOffset + sizeof(byte);
     private const int ArrowSnapshotSize = ArrowSkillOffset + sizeof(byte);
-    private const InputActionFlags ValidInputActions =
-        InputActionFlags.Attack
-        | InputActionFlags.Jump
-        | InputActionFlags.Skill
-        | InputActionFlags.Revive;
 
     public static PacketType ReadPacketType(ReadOnlySpan<byte> payload)
     {
@@ -104,31 +100,53 @@ public static class GamePacketCodec
         return new JoinRejectedPacket(reason);
     }
 
-    public static byte[] EncodeInputCommand(InputCommandPacket packet)
+    public static byte[] EncodeMovementInput(MovementInputPacket packet)
     {
         ValidateInputAxis(packet.Horizontal, nameof(packet.Horizontal));
         ValidateInputAxis(packet.Depth, nameof(packet.Depth));
-        ValidateInputActions(packet.Actions, nameof(packet.Actions));
 
-        var payload = CreateHeader(PacketType.InputCommand, InputCommandSize);
+        var payload = CreateHeader(PacketType.MovementInput, MovementInputSize);
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(HeaderSize), packet.Sequence);
         payload[HeaderSize + sizeof(uint)] = unchecked((byte)packet.Horizontal);
         payload[HeaderSize + sizeof(uint) + 1] = unchecked((byte)packet.Depth);
-        payload[HeaderSize + sizeof(uint) + 2] = (byte)packet.Actions;
         return payload;
     }
 
-    public static InputCommandPacket DecodeInputCommand(ReadOnlySpan<byte> payload)
+    public static MovementInputPacket DecodeMovementInput(ReadOnlySpan<byte> payload)
     {
-        ValidateExactPacket(payload, PacketType.InputCommand, InputCommandSize);
+        ValidateExactPacket(payload, PacketType.MovementInput, MovementInputSize);
         var sequence = BinaryPrimitives.ReadUInt32LittleEndian(payload[HeaderSize..]);
         var horizontal = unchecked((sbyte)payload[HeaderSize + sizeof(uint)]);
         var depth = unchecked((sbyte)payload[HeaderSize + sizeof(uint) + 1]);
-        var actions = (InputActionFlags)payload[HeaderSize + sizeof(uint) + 2];
         ValidateDecodedInputAxis(horizontal, nameof(horizontal));
         ValidateDecodedInputAxis(depth, nameof(depth));
-        ValidateDecodedInputActions(actions);
-        return new InputCommandPacket(sequence, horizontal, depth, actions);
+        return new MovementInputPacket(sequence, horizontal, depth);
+    }
+
+    public static byte[] EncodeActionCommand(ActionCommandPacket packet)
+    {
+        ValidateActionId(packet.ActionId, nameof(packet.ActionId));
+
+        var payload = CreateHeader(PacketType.ActionCommand, ActionCommandSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(HeaderSize), packet.Sequence);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            payload.AsSpan(HeaderSize + sizeof(uint)),
+            (ushort)packet.ActionId);
+        return payload;
+    }
+
+    public static ActionCommandPacket DecodeActionCommand(ReadOnlySpan<byte> payload)
+    {
+        ValidateExactPacket(payload, PacketType.ActionCommand, ActionCommandSize);
+        var sequence = BinaryPrimitives.ReadUInt32LittleEndian(payload[HeaderSize..]);
+        var actionId = (ActionId)BinaryPrimitives.ReadUInt16LittleEndian(
+            payload[(HeaderSize + sizeof(uint))..]);
+        if (!Enum.IsDefined(actionId))
+        {
+            throw new InvalidDataException($"Unknown action id: {(ushort)actionId}.");
+        }
+
+        return new ActionCommandPacket(sequence, actionId);
     }
 
     public static byte[] EncodeWorldSnapshot(WorldSnapshotPacket packet)
@@ -528,11 +546,11 @@ public static class GamePacketCodec
         }
     }
 
-    private static void ValidateInputActions(
-        InputActionFlags actions,
+    private static void ValidateActionId(
+        ActionId actionId,
         string parameterName)
     {
-        if ((actions & ~ValidInputActions) != 0)
+        if (!Enum.IsDefined(actionId))
         {
             throw new ArgumentOutOfRangeException(parameterName);
         }
@@ -543,14 +561,6 @@ public static class GamePacketCodec
         if (axis is < -1 or > 1)
         {
             throw new InvalidDataException($"Invalid {axisName} input axis: {axis}.");
-        }
-    }
-
-    private static void ValidateDecodedInputActions(InputActionFlags actions)
-    {
-        if ((actions & ~ValidInputActions) != 0)
-        {
-            throw new InvalidDataException($"Invalid input action flags: {actions}.");
         }
     }
 }

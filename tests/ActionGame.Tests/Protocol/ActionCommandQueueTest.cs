@@ -5,7 +5,7 @@ namespace ActionGame.Tests.Protocol;
 public sealed class ActionCommandQueueTest
 {
     private static readonly CommandInput[] SkillCommand =
-        [CommandInput.Down, CommandInput.Forward, CommandInput.Skill];
+        [CommandInput.Down, CommandInput.Forward, CommandInput.BasicAttack];
 
     [Fact]
     public void MatchingCommandIsConsumedWithinWindow()
@@ -13,7 +13,7 @@ public sealed class ActionCommandQueueTest
         var queue = new ActionCommandQueue();
         queue.Enqueue(CommandInput.Down, 1.0d);
         queue.Enqueue(CommandInput.Forward, 1.2d);
-        queue.Enqueue(CommandInput.Skill, 1.4d);
+        queue.Enqueue(CommandInput.BasicAttack, 1.4d);
 
         Assert.True(queue.TryConsume(SkillCommand, 1.4d, 0.6d));
         Assert.Equal(0, queue.Count);
@@ -26,13 +26,13 @@ public sealed class ActionCommandQueueTest
         var expired = new ActionCommandQueue();
         expired.Enqueue(CommandInput.Down, 1.0d);
         expired.Enqueue(CommandInput.Forward, 1.2d);
-        expired.Enqueue(CommandInput.Skill, 1.8d);
+        expired.Enqueue(CommandInput.BasicAttack, 1.8d);
         Assert.False(expired.TryConsume(SkillCommand, 1.8d, 0.6d));
 
         var incorrect = new ActionCommandQueue();
         incorrect.Enqueue(CommandInput.Forward, 2.0d);
         incorrect.Enqueue(CommandInput.Down, 2.1d);
-        incorrect.Enqueue(CommandInput.Skill, 2.2d);
+        incorrect.Enqueue(CommandInput.BasicAttack, 2.2d);
         Assert.False(incorrect.TryConsume(SkillCommand, 2.2d, 0.6d));
     }
 

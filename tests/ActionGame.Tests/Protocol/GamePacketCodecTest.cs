@@ -5,16 +5,23 @@ namespace ActionGame.Tests.Protocol;
 public sealed class GamePacketCodecTest
 {
     [Fact]
-    public void InputCommandRoundTrips()
+    public void MovementInputRoundTrips()
     {
-        var expected = new InputCommandPacket(
-            42,
-            -1,
-            1,
-            InputActionFlags.Revive | InputActionFlags.Skill);
+        var expected = new MovementInputPacket(42, -1, 1);
 
-        var actual = GamePacketCodec.DecodeInputCommand(
-            GamePacketCodec.EncodeInputCommand(expected));
+        var actual = GamePacketCodec.DecodeMovementInput(
+            GamePacketCodec.EncodeMovementInput(expected));
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void ActionCommandRoundTrips()
+    {
+        var expected = new ActionCommandPacket(27, ActionId.WarriorDashSlash);
+
+        var actual = GamePacketCodec.DecodeActionCommand(
+            GamePacketCodec.EncodeActionCommand(expected));
 
         Assert.Equal(expected, actual);
     }
@@ -81,23 +88,24 @@ public sealed class GamePacketCodecTest
     [Fact]
     public void InputWithOutOfRangeAxisIsRejected()
     {
-        var payload = GamePacketCodec.EncodeInputCommand(
-            new InputCommandPacket(1, 0, 0, InputActionFlags.None));
-        payload[^2] = 2;
+        var payload = GamePacketCodec.EncodeMovementInput(
+            new MovementInputPacket(1, 0, 0));
+        payload[^1] = 2;
 
         Assert.Throws<InvalidDataException>(() =>
-            GamePacketCodec.DecodeInputCommand(payload));
+            GamePacketCodec.DecodeMovementInput(payload));
     }
 
     [Fact]
-    public void InputWithUnknownActionFlagIsRejected()
+    public void ActionCommandWithUnknownActionIdIsRejected()
     {
-        var payload = GamePacketCodec.EncodeInputCommand(
-            new InputCommandPacket(1, 0, 0, InputActionFlags.None));
-        payload[^1] = 0b1000_0000;
+        var payload = GamePacketCodec.EncodeActionCommand(
+            new ActionCommandPacket(1, ActionId.BasicAttack));
+        payload[^2] = 0xff;
+        payload[^1] = 0xff;
 
         Assert.Throws<InvalidDataException>(() =>
-            GamePacketCodec.DecodeInputCommand(payload));
+            GamePacketCodec.DecodeActionCommand(payload));
     }
 
     [Fact]

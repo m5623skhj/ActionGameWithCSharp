@@ -16,19 +16,19 @@ public sealed class ActionGameClientGame : Game
     private readonly Dictionary<int, PlayerSnapshot> players = [];
     private readonly HitVisualEffectRenderer hitVisualEffects = new();
     private readonly ActionCommandQueue commandQueue = new();
-    private static readonly CommandInput[] SkillCommand =
-        [CommandInput.Down, CommandInput.Forward, CommandInput.Skill];
+    private static readonly CommandInput[] DashSkillCommand =
+        [CommandInput.Down, CommandInput.Forward, CommandInput.BasicAttack];
     private ArrowSnapshot[] arrows = [];
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
     private LpcCharacterRenderer? characterRenderer;
     private RevivePromptRenderer? revivePromptRenderer;
     private int? localPlayerId;
-    private uint inputSequence;
+    private uint movementSequence;
+    private uint actionSequence;
     private double inputAccumulator;
     private long latestServerTick = -1;
     private KeyboardState previousKeyboard;
-    private InputActionFlags pendingActionPresses;
     private bool networkStarted;
     private string connectionStatus = "Starting";
 
@@ -87,8 +87,8 @@ public sealed class ActionGameClientGame : Game
         var elapsedSeconds = (float)gameTime.ElapsedGameTime.TotalSeconds;
         characterRenderer?.Update(elapsedSeconds);
         hitVisualEffects.Update(elapsedSeconds);
-        CaptureActionPresses(keyboard, gameTime.TotalGameTime.TotalSeconds);
-        QueueInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
+        CaptureActionCommands(keyboard, gameTime.TotalGameTime.TotalSeconds);
+        QueueMovementInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
         previousKeyboard = keyboard;
         base.Update(gameTime);
     }
@@ -230,12 +230,11 @@ public sealed class ActionGameClientGame : Game
         arrows = snapshot.Arrows;
     }
 
-    private void QueueInput(KeyboardState keyboard, double elapsedSeconds)
+    private void QueueMovementInput(KeyboardState keyboard, double elapsedSeconds)
     {
         if (!localPlayerId.HasValue)
         {
             inputAccumulator = 0d;
-            pendingActionPresses = InputActionFlags.None;
             return;
         }
 
@@ -255,63 +254,68 @@ public sealed class ActionGameClientGame : Game
                 : GetAxis(
                     keyboard.IsKeyDown(Keys.Up),
                     keyboard.IsKeyDown(Keys.Down));
-            var allowedActions = isDead
-                ? InputActionFlags.Revive
-                : InputActionFlags.Attack
-                    | InputActionFlags.Jump
-                    | InputActionFlags.Skill;
-            var actions = pendingActionPresses & allowedActions;
-            if (keyboard.IsKeyDown(Keys.X))
+            if (!TryQueueMovement(horizontal, depth))
             {
-                actions |= isDead
-                    ? InputActionFlags.Revive
-                    : InputActionFlags.Attack;
-            }
-
-            if (!isDead && keyboard.IsKeyDown(Keys.C))
-            {
-                actions |= InputActionFlags.Jump;
-            }
-
-            if (!isDead && keyboard.IsKeyDown(Keys.Z))
-            {
-                actions |= InputActionFlags.Skill;
-            }
-
-            var payload = GamePacketCodec.EncodeInputCommand(
-                new InputCommandPacket(++inputSequence, horizontal, depth, actions));
-            if (!networkClient.TryQueue(payload))
-            {
-                connectionStatus = "Send queue unavailable";
-                UpdateWindowTitle();
                 break;
             }
 
-            pendingActionPresses = InputActionFlags.None;
         }
     }
 
-    private void CaptureActionPresses(KeyboardState keyboard, double timeSeconds)
+    private void CaptureActionCommands(KeyboardState keyboard, double timeSeconds)
     {
-        var isDead = IsLocalPlayerDead();
-        LatchPressedAction(
-            keyboard,
-            Keys.X,
-            isDead ? InputActionFlags.Revive : InputActionFlags.Attack);
-        if (!isDead)
-        {
-            LatchPressedAction(keyboard, Keys.C, InputActionFlags.Jump);
-            CaptureCommandInputs(keyboard, timeSeconds);
-            LatchPressedAction(keyboard, Keys.Z, InputActionFlags.Skill);
-        }
-        else
+        if (!localPlayerId.HasValue)
         {
             commandQueue.Clear();
+            return;
+        }
+
+        var isDead = IsLocalPlayerDead();
+        if (isDead)
+        {
+            commandQueue.Clear();
+            if (WasPressed(keyboard, Keys.X))
+            {
+                QueueAction(ActionId.Revive);
+            }
+
+            return;
+        }
+
+        CaptureDirectionalCommandInputs(keyboard, timeSeconds);
+        if (WasPressed(keyboard, Keys.X))
+        {
+            commandQueue.Enqueue(CommandInput.BasicAttack, timeSeconds);
+            var actionId = commandQueue.TryConsume(
+                DashSkillCommand,
+                timeSeconds,
+                GameProtocol.SkillCommandWindow)
+                ? GetCharacterSkillActionId()
+                : ActionId.BasicAttack;
+            QueueAction(actionId);
+        }
+
+        if (WasPressed(keyboard, Keys.C))
+        {
+            commandQueue.Enqueue(CommandInput.Jump, timeSeconds);
+            QueueAction(ActionId.Jump);
+        }
+
+        if (WasPressed(keyboard, Keys.Z))
+        {
+            commandQueue.Enqueue(CommandInput.Skill, timeSeconds);
+            QueueAction(GetCharacterSkillActionId());
         }
     }
 
-    private void CaptureCommandInputs(KeyboardState keyboard, double timeSeconds)
+    private void CaptureDirectionalCommandInputs(
+        KeyboardState keyboard,
+        double timeSeconds)
     {
+        var directionPressed = WasPressed(keyboard, Keys.Up)
+            || WasPressed(keyboard, Keys.Down)
+            || WasPressed(keyboard, Keys.Left)
+            || WasPressed(keyboard, Keys.Right);
         if (WasPressed(keyboard, Keys.Down))
         {
             commandQueue.Enqueue(CommandInput.Down, timeSeconds);
@@ -327,18 +331,15 @@ public sealed class ActionGameClientGame : Game
             commandQueue.Enqueue(CommandInput.Forward, timeSeconds);
         }
 
-        if (!WasPressed(keyboard, Keys.Z))
+        if (directionPressed)
         {
-            return;
-        }
-
-        commandQueue.Enqueue(CommandInput.Skill, timeSeconds);
-        if (commandQueue.TryConsume(
-            SkillCommand,
-            timeSeconds,
-            GameProtocol.SkillCommandWindow))
-        {
-            pendingActionPresses |= InputActionFlags.Skill;
+            TryQueueMovement(
+                GetAxis(
+                    keyboard.IsKeyDown(Keys.Left),
+                    keyboard.IsKeyDown(Keys.Right)),
+                GetAxis(
+                    keyboard.IsKeyDown(Keys.Up),
+                    keyboard.IsKeyDown(Keys.Down)));
         }
     }
 
@@ -349,15 +350,36 @@ public sealed class ActionGameClientGame : Game
             && player.IsDead;
     }
 
-    private void LatchPressedAction(
-        KeyboardState keyboard,
-        Keys key,
-        InputActionFlags action)
+    private ActionId GetCharacterSkillActionId()
     {
-        if (keyboard.IsKeyDown(key) && previousKeyboard.IsKeyUp(key))
+        return localPlayerId == GameProtocol.RangerPlayerId
+            ? ActionId.RangerPowerArrow
+            : ActionId.WarriorDashSlash;
+    }
+
+    private void QueueAction(ActionId actionId)
+    {
+        var payload = GamePacketCodec.EncodeActionCommand(
+            new ActionCommandPacket(++actionSequence, actionId));
+        if (!networkClient.TryQueue(payload))
         {
-            pendingActionPresses |= action;
+            connectionStatus = "Send queue unavailable";
+            UpdateWindowTitle();
         }
+    }
+
+    private bool TryQueueMovement(sbyte horizontal, sbyte depth)
+    {
+        var payload = GamePacketCodec.EncodeMovementInput(
+            new MovementInputPacket(++movementSequence, horizontal, depth));
+        if (networkClient.TryQueue(payload))
+        {
+            return true;
+        }
+
+        connectionStatus = "Send queue unavailable";
+        UpdateWindowTitle();
+        return false;
     }
 
     private bool WasPressed(KeyboardState keyboard, Keys key)
@@ -367,7 +389,7 @@ public sealed class ActionGameClientGame : Game
 
     private void UpdateWindowTitle()
     {
-        Window.Title = $"Action Game - {connectionStatus} - Arrows / X Attack-Revive / C Jump / Z Skill / Esc";
+        Window.Title = $"Action Game - {connectionStatus} - Arrows / X Attack-Revive / C Jump / Z Skill / Down-Forward-X / Esc";
     }
 
     private static sbyte GetAxis(bool negative, bool positive)

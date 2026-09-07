@@ -40,12 +40,12 @@ public sealed class GameWorldTest
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryGetPlayer(10, out var initial));
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(2, 1, 0, InputActionFlags.None)));
-        Assert.False(world.ApplyInput(
+            new MovementInputPacket(2, 1, 0)));
+        Assert.False(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+            new MovementInputPacket(1, -1, 0)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var moved));
 
@@ -57,18 +57,63 @@ public sealed class GameWorldTest
     }
 
     [Fact]
+    public void ActionCommandsUseAnIndependentSequence()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+
+        Assert.True(world.ApplyActionCommand(
+            10,
+            new ActionCommandPacket(2, ActionId.BasicAttack)));
+        Assert.False(world.ApplyActionCommand(
+            10,
+            new ActionCommandPacket(1, ActionId.Jump)));
+        Assert.True(world.ApplyMovementInput(
+            10,
+            new MovementInputPacket(1, 1, 0)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var player));
+        Assert.True(player.IsAttacking);
+        Assert.Equal(0f, player.Z);
+        Assert.True(player.X > 100f);
+    }
+
+    [Fact]
+    public void CharacterSpecificActionForAnotherCharacterIsRejected()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.TryJoin(20, out _, out _));
+
+        Assert.False(world.ApplyActionCommand(
+            10,
+            new ActionCommandPacket(1, ActionId.RangerPowerArrow)));
+        Assert.False(world.ApplyActionCommand(
+            20,
+            new ActionCommandPacket(1, ActionId.WarriorDashSlash)));
+
+        world.Update(TickSeconds);
+        Assert.Empty(world.CreateSnapshot().Arrows);
+        Assert.True(world.TryGetPlayer(10, out var warrior));
+        Assert.True(world.TryGetPlayer(20, out var ranger));
+        Assert.False(warrior.IsAttacking);
+        Assert.False(ranger.IsAttacking);
+    }
+
+    [Fact]
     public void DiagonalInputIsNormalizedBeforeAxisSpeedsAreApplied()
     {
         var horizontalWorld = new GameWorld();
         var diagonalWorld = new GameWorld();
         Assert.True(horizontalWorld.TryJoin(10, out _, out _));
         Assert.True(diagonalWorld.TryJoin(10, out _, out _));
-        Assert.True(horizontalWorld.ApplyInput(
+        Assert.True(horizontalWorld.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
-        Assert.True(diagonalWorld.ApplyInput(
+            new MovementInputPacket(1, 1, 0)));
+        Assert.True(diagonalWorld.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, 1, 1, InputActionFlags.None)));
+            new MovementInputPacket(1, 1, 1)));
         Assert.True(diagonalWorld.TryGetPlayer(10, out var initial));
 
         horizontalWorld.Update(TickSeconds);
@@ -93,9 +138,9 @@ public sealed class GameWorldTest
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+            new MovementInputPacket(1, -1, 0)));
 
         world.Update(10f);
         Assert.True(world.TryGetPlayer(10, out var player));
@@ -123,9 +168,9 @@ public sealed class GameWorldTest
         Assert.True(world.TryJoin(10, out _, out _));
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            world.ApplyInput(
+            world.ApplyMovementInput(
                 10,
-                new InputCommandPacket(1, 2, 0, InputActionFlags.None)));
+                new MovementInputPacket(1, 2, 0)));
     }
 
     [Fact]
@@ -133,9 +178,9 @@ public sealed class GameWorldTest
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(1, 0, 0, InputActionFlags.Jump)));
+            new ActionCommandPacket(1, ActionId.Jump)));
 
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var airborne));
@@ -158,26 +203,22 @@ public sealed class GameWorldTest
         Assert.True(secondPressWorld.TryJoin(10, out _, out _));
         Assert.True(controlWorld.TryJoin(10, out _, out _));
 
-        ApplyToBoth(new InputCommandPacket(1, 0, 0, InputActionFlags.Jump));
+        ApplyJumpToBoth(1);
         UpdateBoth();
-        ApplyToBoth(new InputCommandPacket(2, 0, 0, InputActionFlags.None));
-        UpdateBoth();
-        Assert.True(secondPressWorld.ApplyInput(
+        Assert.True(secondPressWorld.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Jump)));
-        Assert.True(controlWorld.ApplyInput(
-            10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.None)));
+            new ActionCommandPacket(2, ActionId.Jump)));
         UpdateBoth();
 
         Assert.True(secondPressWorld.TryGetPlayer(10, out var secondPressPlayer));
         Assert.True(controlWorld.TryGetPlayer(10, out var controlPlayer));
         Assert.Equal(controlPlayer.Z, secondPressPlayer.Z, precision: 4);
 
-        void ApplyToBoth(InputCommandPacket input)
+        void ApplyJumpToBoth(uint sequence)
         {
-            Assert.True(secondPressWorld.ApplyInput(10, input));
-            Assert.True(controlWorld.ApplyInput(10, input));
+            var command = new ActionCommandPacket(sequence, ActionId.Jump);
+            Assert.True(secondPressWorld.ApplyActionCommand(10, command));
+            Assert.True(controlWorld.ApplyActionCommand(10, command));
         }
 
         void UpdateBoth()
@@ -192,9 +233,12 @@ public sealed class GameWorldTest
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, -1, 0, InputActionFlags.Attack)));
+            new MovementInputPacket(1, -1, 0)));
+        Assert.True(world.ApplyActionCommand(
+            10,
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
 
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var attacking));
@@ -214,9 +258,9 @@ public sealed class GameWorldTest
     public void AttackInRangeDealsDamageOnlyOncePerAction()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
 
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(20, out var damaged));
@@ -236,21 +280,21 @@ public sealed class GameWorldTest
     {
         var world = CreateWorldWithPlayersInAttackRange();
         Assert.True(world.TryGetPlayer(20, out var beforeHit));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(3, -1, 0, InputActionFlags.None)));
+            new MovementInputPacket(3, -1, 0)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(20, out var firstKnockbackTick));
         Assert.True(firstKnockbackTick.X > beforeHit.X);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
+            new MovementInputPacket(4, 0, 0)));
         for (var index = 0; index < 5; index++)
         {
             world.Update(TickSeconds);
@@ -264,19 +308,24 @@ public sealed class GameWorldTest
     }
 
     [Fact]
-    public void HitStunBlocksActionsAndRequiresANewButtonPress()
+    public void HitStunDiscardsActionsAndAcceptsNewCommandsAfterRecovery()
     {
         var world = CreateWorldWithPlayersInAttackRange();
         Assert.True(world.TryGetPlayer(20, out var beforeHit));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
 
-        var heldActions = InputActionFlags.Attack | InputActionFlags.Jump;
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(3, -1, 1, heldActions)));
+            new MovementInputPacket(3, -1, 1)));
+        Assert.True(world.ApplyActionCommand(
+            20,
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
+        Assert.True(world.ApplyActionCommand(
+            20,
+            new ActionCommandPacket(2, ActionId.Jump)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(20, out var stunned));
         Assert.Equal(beforeHit.Y, stunned.Y);
@@ -291,22 +340,18 @@ public sealed class GameWorldTest
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
-            20,
-            new InputCommandPacket(4, 0, 0, heldActions)));
         world.Update(TickSeconds);
-        Assert.True(world.TryGetPlayer(20, out var stillHeld));
-        Assert.Equal(0f, stillHeld.Z);
-        Assert.False(stillHeld.IsAttacking);
+        Assert.True(world.TryGetPlayer(20, out var noRepeatedInput));
+        Assert.Equal(0f, noRepeatedInput.Z);
+        Assert.False(noRepeatedInput.IsAttacking);
         Assert.Empty(world.CreateSnapshot().Arrows);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(5, 0, 0, InputActionFlags.None)));
-        world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
+            new ActionCommandPacket(3, ActionId.Jump)));
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(6, 0, 0, heldActions)));
+            new ActionCommandPacket(4, ActionId.BasicAttack)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var recovered));
@@ -319,9 +364,9 @@ public sealed class GameWorldTest
     public void InvulnerabilityStateExpiresAfterServerDuration()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var protectedPlayer));
@@ -348,9 +393,9 @@ public sealed class GameWorldTest
     {
         var world = CreateWorldWithPlayersInAttackRange();
         Assert.True(world.TryGetPlayer(10, out var beforeHit));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
         world.Update(TickSeconds);
 
@@ -378,27 +423,27 @@ public sealed class GameWorldTest
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(1, 1, 0)));
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
+            new MovementInputPacket(1, 1, 0)));
         for (var index = 0; index < 100; index++)
         {
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(2, 0, 0)));
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+            new MovementInputPacket(2, 0, 0)));
         world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
         world.Update(TickSeconds);
 
@@ -414,17 +459,17 @@ public sealed class GameWorldTest
     public void AttackOutsideDepthRangeDoesNotDealDamage()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(3, 0, 1, InputActionFlags.None)));
+            new MovementInputPacket(3, 0, 1)));
         for (var index = 0; index < 5; index++)
         {
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var target));
@@ -435,12 +480,12 @@ public sealed class GameWorldTest
     public void MeleeAndRangedAttacksResolveWithDifferentDamageTiming()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
-        Assert.True(world.ApplyInput(
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
 
         world.Update(TickSeconds);
 
@@ -466,20 +511,20 @@ public sealed class GameWorldTest
     public void ArrowThatMissesDisappearsAfterMaximumDistance()
     {
         var world = CreateWorldWithPlayersInAttackRange();
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(3, 0, 1, InputActionFlags.None)));
+            new MovementInputPacket(3, 0, 1)));
         for (var index = 0; index < 5; index++)
         {
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(4, 0, 0)));
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Attack)));
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
         world.Update(TickSeconds);
         Assert.Single(world.CreateSnapshot().Arrows);
 
@@ -508,13 +553,15 @@ public sealed class GameWorldTest
         Assert.False(dead.IsAttacking);
         Assert.False(dead.IsInvulnerable);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(
-                3,
-                1,
-                1,
-                InputActionFlags.Attack | InputActionFlags.Jump)));
+            new MovementInputPacket(3, 1, 1)));
+        Assert.True(world.ApplyActionCommand(
+            20,
+            new ActionCommandPacket(1, ActionId.BasicAttack)));
+        Assert.True(world.ApplyActionCommand(
+            20,
+            new ActionCommandPacket(2, ActionId.Jump)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var afterInput));
@@ -532,9 +579,9 @@ public sealed class GameWorldTest
         var world = CreateWorldWithPlayersInAttackRange();
         KillSecondPlayer(world);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Revive)));
+            new ActionCommandPacket(1, ActionId.Revive)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var player));
@@ -578,54 +625,31 @@ public sealed class GameWorldTest
     }
 
     [Fact]
-    public void ReviveRequiresNewRequestAfterDelayAndRestoresPlayer()
+    public void ReviveRequiresNewCommandAfterDelayAndRestoresPlayer()
     {
         var world = CreateWorldWithPlayersInAttackRange();
         KillSecondPlayer(world);
         Assert.True(world.TryGetPlayer(20, out var dead));
 
-        uint sequence = 3;
-        Assert.True(world.ApplyInput(
+        uint actionSequence = 1;
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(
-                sequence++,
-                0,
-                0,
-                InputActionFlags.Revive)));
+            new ActionCommandPacket(actionSequence++, ActionId.Revive)));
         world.Update(TickSeconds);
 
         var requiredTicks = (int)(
             GameProtocol.ReviveDelaySeconds * GameProtocol.SimulationRate);
         for (var index = 0; index < requiredTicks; index++)
         {
-            Assert.True(world.ApplyInput(
-                20,
-                new InputCommandPacket(
-                    sequence++,
-                    0,
-                    0,
-                    InputActionFlags.Revive)));
             world.Update(TickSeconds);
         }
 
         Assert.True(world.TryGetPlayer(20, out var stillDead));
         Assert.True(stillDead.IsDead);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(
-                sequence++,
-                0,
-                0,
-                InputActionFlags.None)));
-        world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
-            20,
-            new InputCommandPacket(
-                sequence++,
-                0,
-                0,
-                InputActionFlags.Revive)));
+            new ActionCommandPacket(actionSequence++, ActionId.Revive)));
         world.Update(TickSeconds);
 
         Assert.True(world.TryGetPlayer(20, out var revived));
@@ -634,32 +658,19 @@ public sealed class GameWorldTest
         Assert.Equal(dead.X, revived.X);
         Assert.Equal(dead.Y, revived.Y);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(
-                sequence++,
-                0,
-                0,
-                InputActionFlags.Attack)));
+            new ActionCommandPacket(actionSequence++, ActionId.BasicAttack)));
         world.Update(TickSeconds);
-        Assert.True(world.TryGetPlayer(20, out var heldAfterRevive));
-        Assert.False(heldAfterRevive.IsAttacking);
+        Assert.True(world.TryGetPlayer(20, out var attackingAfterRevive));
+        Assert.True(attackingAfterRevive.IsAttacking);
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(
-                sequence++,
-                0,
-                0,
-                InputActionFlags.None)));
-        world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(3, -1, 0)));
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(
-                sequence++,
-                -1,
-                0,
-                InputActionFlags.Jump)));
+            new ActionCommandPacket(actionSequence++, ActionId.Jump)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(20, out var active));
         Assert.True(active.X < revived.X);
@@ -671,9 +682,9 @@ public sealed class GameWorldTest
     {
         var world = CreateWorldWithPlayersInAttackRange();
         Assert.True(world.TryGetPlayer(10, out var beforeSkill));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
+            new ActionCommandPacket(1, ActionId.WarriorDashSlash)));
 
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var player));
@@ -697,28 +708,21 @@ public sealed class GameWorldTest
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(1, 0, 0, InputActionFlags.Skill)));
+            new ActionCommandPacket(1, ActionId.WarriorDashSlash)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var afterFirstSkill));
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
-        world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
-            10,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
+            new ActionCommandPacket(2, ActionId.WarriorDashSlash)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var afterSecondRequest));
 
         Assert.Equal(afterFirstSkill.X, afterSecondRequest.X);
         Assert.True(afterSecondRequest.SkillCooldownRemaining > 0f);
 
-        Assert.True(world.ApplyInput(
-            10,
-            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
         var cooldownTicks = (int)(
             GameProtocol.SkillCooldown * GameProtocol.SimulationRate);
         for (var index = 0; index < cooldownTicks; index++)
@@ -726,9 +730,9 @@ public sealed class GameWorldTest
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             10,
-            new InputCommandPacket(5, 0, 0, InputActionFlags.Skill)));
+            new ActionCommandPacket(3, ActionId.WarriorDashSlash)));
         world.Update(TickSeconds);
         Assert.True(world.TryGetPlayer(10, out var afterCooldown));
         Assert.Equal(
@@ -742,17 +746,17 @@ public sealed class GameWorldTest
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+            new MovementInputPacket(1, -1, 0)));
         world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+            new MovementInputPacket(2, 0, 0)));
         world.Update(TickSeconds);
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyActionCommand(
             20,
-            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
+            new ActionCommandPacket(1, ActionId.RangerPowerArrow)));
 
         world.Update(TickSeconds);
         var arrow = Assert.Single(world.CreateSnapshot().Arrows);
@@ -786,23 +790,23 @@ public sealed class GameWorldTest
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(1, 1, 0, InputActionFlags.None)));
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(1, 1, 0)));
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+            new MovementInputPacket(1, -1, 0)));
         for (var index = 0; index < 30; index++)
         {
             world.Update(TickSeconds);
         }
 
-        Assert.True(world.ApplyInput(
+        Assert.True(world.ApplyMovementInput(
             10,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
-        Assert.True(world.ApplyInput(
+            new MovementInputPacket(2, 0, 0)));
+        Assert.True(world.ApplyMovementInput(
             20,
-            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+            new MovementInputPacket(2, 0, 0)));
         world.Update(TickSeconds);
         return world;
     }
@@ -813,38 +817,26 @@ public sealed class GameWorldTest
         var attackCount = GameProtocol.MaxHealth / GameProtocol.AttackDamage;
         for (var attackIndex = 0; attackIndex < attackCount; attackIndex++)
         {
-            Assert.True(world.ApplyInput(
+            Assert.True(world.ApplyActionCommand(
                 10,
-                new InputCommandPacket(
-                    sequence++,
-                    0,
-                    0,
-                    InputActionFlags.Attack)));
+                new ActionCommandPacket(sequence++, ActionId.BasicAttack)));
             world.Update(TickSeconds);
             if (attackIndex == attackCount - 1)
             {
                 continue;
             }
 
-            Assert.True(world.ApplyInput(
+            Assert.True(world.ApplyMovementInput(
                 10,
-                new InputCommandPacket(
-                    sequence++,
-                    1,
-                    0,
-                    InputActionFlags.None)));
+                new MovementInputPacket(sequence++, 1, 0)));
             for (var followTick = 0; followTick < 4; followTick++)
             {
                 world.Update(TickSeconds);
             }
 
-            Assert.True(world.ApplyInput(
+            Assert.True(world.ApplyMovementInput(
                 10,
-                new InputCommandPacket(
-                    sequence++,
-                    0,
-                    0,
-                    InputActionFlags.None)));
+                new MovementInputPacket(sequence++, 0, 0)));
             for (var cooldownTick = 4; cooldownTick < 7; cooldownTick++)
             {
                 world.Update(TickSeconds);

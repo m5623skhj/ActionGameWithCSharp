@@ -22,8 +22,11 @@ internal sealed class GameServerCoordinator(
             case JoinServerEvent join:
                 await HandleJoinAsync(join).ConfigureAwait(false);
                 break;
-            case InputServerEvent input:
-                HandleInput(input);
+            case MovementInputServerEvent input:
+                HandleMovementInput(input);
+                break;
+            case ActionCommandServerEvent command:
+                HandleActionCommand(command);
                 break;
             case LeaveServerEvent leave:
                 RemovePeer(leave.ConnectionId);
@@ -106,7 +109,7 @@ internal sealed class GameServerCoordinator(
         BroadcastSnapshot();
     }
 
-    private void HandleInput(InputServerEvent input)
+    private void HandleMovementInput(MovementInputServerEvent input)
     {
         if (!peers.TryGetValue(input.ConnectionId, out var peerState))
         {
@@ -114,7 +117,18 @@ internal sealed class GameServerCoordinator(
         }
 
         peerState.LastInputTick = world.ServerTick;
-        world.ApplyInput(input.ConnectionId, input.Input);
+        world.ApplyMovementInput(input.ConnectionId, input.Input);
+    }
+
+    private void HandleActionCommand(ActionCommandServerEvent command)
+    {
+        if (!peers.TryGetValue(command.ConnectionId, out var peerState))
+        {
+            return;
+        }
+
+        peerState.LastInputTick = world.ServerTick;
+        world.ApplyActionCommand(command.ConnectionId, command.Command);
     }
 
     private void HandleTick()

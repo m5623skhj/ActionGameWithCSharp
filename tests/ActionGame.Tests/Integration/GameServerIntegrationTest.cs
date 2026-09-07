@@ -83,8 +83,8 @@ public sealed class GameServerIntegrationTest
                 player => player.PlayerId == firstJoin.PlayerId);
 
             await firstClient.SendAsync(
-                GamePacketCodec.EncodeInputCommand(
-                    new InputCommandPacket(1, 1, 0, InputActionFlags.None)),
+                GamePacketCodec.EncodeMovementInput(
+                    new MovementInputPacket(1, 1, 0)),
                 timeout.Token);
             var movedSnapshot = await firstClient.WaitForSnapshotAsync(
                 snapshot => snapshot.Players.Any(
@@ -106,12 +106,16 @@ public sealed class GameServerIntegrationTest
             Assert.True(synchronizedFirstPlayer.X >= movedFirstPlayer.X);
 
             await firstClient.SendAsync(
-                GamePacketCodec.EncodeInputCommand(
-                    new InputCommandPacket(
-                        2,
-                        0,
-                        0,
-                        InputActionFlags.Jump | InputActionFlags.Attack)),
+                GamePacketCodec.EncodeMovementInput(
+                    new MovementInputPacket(2, 0, 0)),
+                timeout.Token);
+            await firstClient.SendAsync(
+                GamePacketCodec.EncodeActionCommand(
+                    new ActionCommandPacket(1, ActionId.Jump)),
+                timeout.Token);
+            await firstClient.SendAsync(
+                GamePacketCodec.EncodeActionCommand(
+                    new ActionCommandPacket(2, ActionId.BasicAttack)),
                 timeout.Token);
             var actionSnapshot = await firstClient.WaitForSnapshotAsync(
                 snapshot => snapshot.Players.Any(
@@ -136,8 +140,8 @@ public sealed class GameServerIntegrationTest
                     && player.IsAttacking);
 
             await firstClient.SendAsync(
-                GamePacketCodec.EncodeInputCommand(
-                    new InputCommandPacket(3, 0, 0, InputActionFlags.None)),
+                GamePacketCodec.EncodeMovementInput(
+                    new MovementInputPacket(3, 0, 0)),
                 timeout.Token);
             await secondClient.DisposeAsync();
             secondClient = null;

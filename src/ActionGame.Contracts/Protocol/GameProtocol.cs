@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 8;
+    public const byte Version = 9;
     public const int MaxPlayers = 2;
     public const int RangerPlayerId = 2;
     public const int MaxArrows = 16;
@@ -51,14 +51,13 @@ public static class GameProtocol
     public const int DefaultPort = 7777;
 }
 
-[Flags]
-public enum InputActionFlags : byte
+public enum ActionId : ushort
 {
-    None = 0,
-    Attack = 1 << 0,
-    Jump = 1 << 1,
-    Skill = 1 << 2,
-    Revive = 1 << 3,
+    BasicAttack = 1,
+    Jump = 2,
+    Revive = 3,
+    WarriorDashSlash = 100,
+    RangerPowerArrow = 200,
 }
 
 public enum FacingDirection : sbyte
@@ -72,9 +71,10 @@ public enum PacketType : byte
     JoinRequest = 1,
     JoinAccepted = 2,
     JoinRejected = 3,
-    InputCommand = 4,
+    MovementInput = 4,
     WorldSnapshot = 5,
     LeaveRequest = 6,
+    ActionCommand = 7,
 }
 
 public enum JoinRejectReason : byte
@@ -87,11 +87,14 @@ public readonly record struct JoinAcceptedPacket(int PlayerId);
 
 public readonly record struct JoinRejectedPacket(JoinRejectReason Reason);
 
-public readonly record struct InputCommandPacket(
+public readonly record struct MovementInputPacket(
     uint Sequence,
     sbyte Horizontal,
-    sbyte Depth,
-    InputActionFlags Actions);
+    sbyte Depth);
+
+public readonly record struct ActionCommandPacket(
+    uint Sequence,
+    ActionId ActionId);
 
 public readonly record struct PlayerSnapshot(
     int PlayerId,

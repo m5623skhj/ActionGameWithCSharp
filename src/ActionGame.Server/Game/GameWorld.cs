@@ -4,6 +4,7 @@ namespace ActionGame.Server.Game;
 
 public sealed class GameWorld
 {
+    private const int MaximumPendingActions = 8;
     private readonly Dictionary<long, PlayerState> playersByConnection = [];
     private readonly List<ArrowState> arrows = [];
     private double serverTimeSeconds;
@@ -52,7 +53,7 @@ public sealed class GameWorld
         return true;
     }
 
-    public bool ApplyInput(long connectionId, InputCommandPacket input)
+    public bool ApplyMovementInput(long connectionId, MovementInputPacket input)
     {
         if (input.Horizontal is < -1 or > 1)
         {
@@ -64,13 +65,36 @@ public sealed class GameWorld
             throw new ArgumentOutOfRangeException(nameof(input));
         }
 
-        const InputActionFlags validActions = InputActionFlags.Attack
-            | InputActionFlags.Jump
-            | InputActionFlags.Skill
-            | InputActionFlags.Revive;
-        if ((input.Actions & ~validActions) != 0)
+        if (!playersByConnection.TryGetValue(connectionId, out var player))
         {
-            throw new ArgumentOutOfRangeException(nameof(input));
+            return false;
+        }
+
+        if (player.HasMovementInput
+            && input.Sequence <= player.LastMovementInputSequence)
+        {
+            return false;
+        }
+
+        player.HasMovementInput = true;
+        player.LastMovementInputSequence = input.Sequence;
+        if (player.IsDead || player.HitStunTimeRemaining > 0f)
+        {
+            player.Horizontal = 0;
+            player.Depth = 0;
+            return true;
+        }
+
+        player.Horizontal = input.Horizontal;
+        player.Depth = input.Depth;
+        return true;
+    }
+
+    public bool ApplyActionCommand(long connectionId, ActionCommandPacket command)
+    {
+        if (!Enum.IsDefined(command.ActionId))
+        {
+            throw new ArgumentOutOfRangeException(nameof(command));
         }
 
         if (!playersByConnection.TryGetValue(connectionId, out var player))
@@ -78,53 +102,36 @@ public sealed class GameWorld
             return false;
         }
 
-        if (player.HasInput && input.Sequence <= player.LastInputSequence)
+        if (player.HasActionCommand
+            && command.Sequence <= player.LastActionCommandSequence)
         {
             return false;
         }
 
-        player.HasInput = true;
-        player.LastInputSequence = input.Sequence;
+        player.HasActionCommand = true;
+        player.LastActionCommandSequence = command.Sequence;
+        if (!IsActionAllowedForPlayer(player, command.ActionId))
+        {
+            return false;
+        }
+
         if (player.IsDead)
         {
-            player.Horizontal = 0;
-            player.Depth = 0;
-            player.PendingAttack = false;
-            player.PendingJump = false;
-            player.PendingSkill = false;
-            player.PendingRevive |= IsPressed(
-                input.Actions,
-                player.HeldActions,
-                InputActionFlags.Revive);
-            player.HeldActions = input.Actions;
+            if (command.ActionId == ActionId.Revive)
+            {
+                EnqueueAction(player, command.ActionId);
+            }
+
             return true;
         }
 
-        if (player.HitStunTimeRemaining > 0f)
+        if (player.HitStunTimeRemaining > 0f
+            || command.ActionId == ActionId.Revive)
         {
-            ClearControllableState(player, clearHeldActions: false);
-            player.HeldActions = input.Actions;
             return true;
         }
 
-        player.Horizontal = input.Horizontal;
-        player.Depth = input.Depth;
-        var wasHoldingRevive =
-            (player.HeldActions & InputActionFlags.Revive) != 0;
-        player.PendingAttack |= !wasHoldingRevive
-            && IsPressed(
-                input.Actions,
-                player.HeldActions,
-                InputActionFlags.Attack);
-        player.PendingJump |= IsPressed(
-            input.Actions,
-            player.HeldActions,
-            InputActionFlags.Jump);
-        player.PendingSkill |= IsPressed(
-            input.Actions,
-            player.HeldActions,
-            InputActionFlags.Skill);
-        player.HeldActions = input.Actions;
+        EnqueueAction(player, command.ActionId);
         return true;
     }
 
@@ -158,15 +165,14 @@ public sealed class GameWorld
                 player.SkillCooldownRemaining - deltaSeconds);
             if (player.IsDead)
             {
-                var reviveRequested = player.PendingRevive;
-                player.PendingRevive = false;
+                var reviveRequested = DrainReviveRequest(player);
                 if (reviveRequested && CanRevive(player))
                 {
                     Revive(player);
                     continue;
                 }
 
-                ClearControllableState(player, clearHeldActions: false);
+                ClearControllableState(player);
                 player.AttackTimeRemaining = 0f;
                 player.AttackCooldownRemaining = 0f;
                 player.SkillCooldownRemaining = 0f;
@@ -180,32 +186,33 @@ public sealed class GameWorld
 
             if (player.HitStunTimeRemaining > 0f)
             {
-                ClearControllableState(player, clearHeldActions: false);
+                ClearControllableState(player);
             }
             else
             {
-                if (player.PendingJump && player.Z <= 0f)
+                var requestedAction = DrainRequestedActions(player, out var jumpRequested);
+                if (jumpRequested && player.Z <= 0f)
                 {
                     player.VerticalVelocity = GameProtocol.JumpInitialVelocity;
                 }
 
-                if (player.PendingSkill && player.SkillCooldownRemaining <= 0f)
+                if ((requestedAction is ActionId.WarriorDashSlash
+                        or ActionId.RangerPowerArrow)
+                    && player.SkillCooldownRemaining <= 0f)
                 {
                     player.AttackTimeRemaining = GameProtocol.MeleeSkillDuration;
                     player.SkillCooldownRemaining = GameProtocol.SkillCooldown;
                     player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
                     skillUsers.Add(player);
                 }
-                else if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
+                else if (requestedAction == ActionId.BasicAttack
+                    && player.AttackCooldownRemaining <= 0f)
                 {
                     player.AttackTimeRemaining = GameProtocol.AttackDuration;
                     player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
                     attackers.Add(player);
                 }
 
-                player.PendingJump = false;
-                player.PendingAttack = false;
-                player.PendingSkill = false;
             }
 
             var horizontal = (float)player.Horizontal;
@@ -351,12 +358,55 @@ public sealed class GameWorld
         };
     }
 
-    private static bool IsPressed(
-        InputActionFlags current,
-        InputActionFlags previous,
-        InputActionFlags action)
+    private static bool IsActionAllowedForPlayer(PlayerState player, ActionId actionId)
     {
-        return (current & action) != 0 && (previous & action) == 0;
+        return actionId switch
+        {
+            ActionId.BasicAttack or ActionId.Jump or ActionId.Revive => true,
+            ActionId.WarriorDashSlash => player.PlayerId != GameProtocol.RangerPlayerId,
+            ActionId.RangerPowerArrow => player.PlayerId == GameProtocol.RangerPlayerId,
+            _ => false,
+        };
+    }
+
+    private static void EnqueueAction(PlayerState player, ActionId actionId)
+    {
+        if (player.PendingActions.Count < MaximumPendingActions)
+        {
+            player.PendingActions.Enqueue(actionId);
+        }
+    }
+
+    private static bool DrainReviveRequest(PlayerState player)
+    {
+        var reviveRequested = false;
+        while (player.PendingActions.TryDequeue(out var actionId))
+        {
+            reviveRequested |= actionId == ActionId.Revive;
+        }
+
+        return reviveRequested;
+    }
+
+    private static ActionId? DrainRequestedActions(
+        PlayerState player,
+        out bool jumpRequested)
+    {
+        ActionId? offensiveAction = null;
+        jumpRequested = false;
+        while (player.PendingActions.TryDequeue(out var actionId))
+        {
+            if (actionId == ActionId.Jump)
+            {
+                jumpRequested = true;
+            }
+            else if (offensiveAction is null && actionId != ActionId.Revive)
+            {
+                offensiveAction = actionId;
+            }
+        }
+
+        return offensiveAction;
     }
 
     private void ResolveAttacks(IReadOnlyList<PlayerState> attackers)
@@ -596,7 +646,7 @@ public sealed class GameWorld
         player.Health = Math.Max(0, player.Health - damage);
         if (!player.IsDead)
         {
-            ClearControllableState(player, clearHeldActions: false);
+            ClearControllableState(player);
             player.AttackTimeRemaining = 0f;
             player.KnockbackVelocityX = knockbackVelocityX;
             player.HitStunTimeRemaining = hitStunDuration;
@@ -606,7 +656,7 @@ public sealed class GameWorld
         }
 
         player.DeathTimeSeconds = serverTimeSeconds;
-        ClearControllableState(player, clearHeldActions: true);
+        ClearControllableState(player);
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
         player.SkillCooldownRemaining = 0f;
@@ -643,7 +693,7 @@ public sealed class GameWorld
     {
         player.Health = GameProtocol.MaxHealth;
         player.DeathTimeSeconds = null;
-        ClearControllableState(player, clearHeldActions: false);
+        ClearControllableState(player);
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
         player.SkillCooldownRemaining = 0f;
@@ -664,20 +714,11 @@ public sealed class GameWorld
         return value - (MathF.Sign(value) * maximumDelta);
     }
 
-    private static void ClearControllableState(
-        PlayerState player,
-        bool clearHeldActions)
+    private static void ClearControllableState(PlayerState player)
     {
         player.Horizontal = 0;
         player.Depth = 0;
-        player.PendingAttack = false;
-        player.PendingJump = false;
-        player.PendingSkill = false;
-        player.PendingRevive = false;
-        if (clearHeldActions)
-        {
-            player.HeldActions = InputActionFlags.None;
-        }
+        player.PendingActions.Clear();
     }
 
     private sealed class PlayerState(int playerId, float x, float y)
@@ -716,19 +757,15 @@ public sealed class GameWorld
 
         public FacingDirection Facing { get; set; } = FacingDirection.Right;
 
-        public InputActionFlags HeldActions { get; set; }
+        public Queue<ActionId> PendingActions { get; } = [];
 
-        public bool PendingAttack { get; set; }
+        public uint LastMovementInputSequence { get; set; }
 
-        public bool PendingJump { get; set; }
+        public bool HasMovementInput { get; set; }
 
-        public bool PendingSkill { get; set; }
+        public uint LastActionCommandSequence { get; set; }
 
-        public bool PendingRevive { get; set; }
-
-        public uint LastInputSequence { get; set; }
-
-        public bool HasInput { get; set; }
+        public bool HasActionCommand { get; set; }
     }
 
     private readonly record struct PendingHit(int Damage, float KnockbackVelocityX);
