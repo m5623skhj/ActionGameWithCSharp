@@ -212,7 +212,7 @@ internal sealed class LpcCharacterRenderer : IDisposable
 
         if (MathF.Abs(deltaX) > MovementEpsilon)
         {
-            return deltaX < 0f ? CharacterDirection.Left : CharacterDirection.Right;
+            return DirectionFromFacing(facing);
         }
 
         return DirectionFromFacing(facing);
