@@ -785,16 +785,84 @@ public sealed class GameWorldTest
         Assert.True(GameProtocol.RangerSkillArrowMaxDistance > GameProtocol.ArrowMaxDistance);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SameTickSkillsResolveRegardlessOfPlayerStorageOrder(
+        bool rangerStoredFirst)
+    {
+        var setup = CreateLethalSameTickSkillWorld(rangerStoredFirst);
+        Assert.True(setup.World.ApplyActionCommand(
+            setup.WarriorConnectionId,
+            new ActionCommandPacket(5, ActionId.WarriorDashSlash)));
+        Assert.True(setup.World.ApplyActionCommand(
+            setup.RangerConnectionId,
+            new ActionCommandPacket(1, ActionId.RangerPowerArrow)));
+
+        setup.World.Update(TickSeconds);
+
+        Assert.True(setup.World.TryGetPlayer(
+            setup.RangerConnectionId,
+            out var ranger));
+        Assert.True(ranger.IsDead);
+        var arrow = Assert.Single(setup.World.CreateSnapshot().Arrows);
+        Assert.Equal(GameProtocol.RangerPlayerId, arrow.OwnerPlayerId);
+        Assert.True(arrow.IsSkillArrow);
+    }
+
     private static GameWorld CreateWorldWithPlayersInAttackRange()
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
+        MovePlayersIntoAttackRange(world, 10, 20);
+        return world;
+    }
+
+    private static (
+        GameWorld World,
+        long WarriorConnectionId,
+        long RangerConnectionId) CreateLethalSameTickSkillWorld(
+            bool rangerStoredFirst)
+    {
+        const long initialWarriorConnectionId = 10;
+        const long rangerConnectionId = 20;
+        var warriorConnectionId = initialWarriorConnectionId;
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(initialWarriorConnectionId, out _, out _));
+        Assert.True(world.TryJoin(rangerConnectionId, out _, out _));
+        if (rangerStoredFirst)
+        {
+            Assert.True(world.Leave(initialWarriorConnectionId));
+            warriorConnectionId = 30;
+            Assert.True(world.TryJoin(
+                warriorConnectionId,
+                out var reassignedPlayerId,
+                out _));
+            Assert.Equal(1, reassignedPlayerId);
+        }
+
+        MovePlayersIntoAttackRange(
+            world,
+            warriorConnectionId,
+            rangerConnectionId);
+        DamageRangerToLethalSkillRange(
+            world,
+            warriorConnectionId,
+            rangerConnectionId);
+        return (world, warriorConnectionId, rangerConnectionId);
+    }
+
+    private static void MovePlayersIntoAttackRange(
+        GameWorld world,
+        long warriorConnectionId,
+        long rangerConnectionId)
+    {
         Assert.True(world.ApplyMovementInput(
-            10,
+            warriorConnectionId,
             new MovementInputPacket(1, 1, 0)));
         Assert.True(world.ApplyMovementInput(
-            20,
+            rangerConnectionId,
             new MovementInputPacket(1, -1, 0)));
         for (var index = 0; index < 30; index++)
         {
@@ -802,13 +870,52 @@ public sealed class GameWorldTest
         }
 
         Assert.True(world.ApplyMovementInput(
-            10,
+            warriorConnectionId,
             new MovementInputPacket(2, 0, 0)));
         Assert.True(world.ApplyMovementInput(
-            20,
+            rangerConnectionId,
             new MovementInputPacket(2, 0, 0)));
         world.Update(TickSeconds);
-        return world;
+    }
+
+    private static void DamageRangerToLethalSkillRange(
+        GameWorld world,
+        long warriorConnectionId,
+        long rangerConnectionId)
+    {
+        uint actionSequence = 1;
+        uint movementSequence = 3;
+        var requiredDamage = GameProtocol.MaxHealth - GameProtocol.MeleeSkillDamage;
+        var attackCount = (requiredDamage + GameProtocol.AttackDamage - 1)
+            / GameProtocol.AttackDamage;
+        for (var attackIndex = 0; attackIndex < attackCount; attackIndex++)
+        {
+            Assert.True(world.ApplyActionCommand(
+                warriorConnectionId,
+                new ActionCommandPacket(
+                    actionSequence++,
+                    ActionId.BasicAttack)));
+            world.Update(TickSeconds);
+
+            Assert.True(world.ApplyMovementInput(
+                warriorConnectionId,
+                new MovementInputPacket(movementSequence++, 1, 0)));
+            for (var followTick = 0; followTick < 4; followTick++)
+            {
+                world.Update(TickSeconds);
+            }
+
+            Assert.True(world.ApplyMovementInput(
+                warriorConnectionId,
+                new MovementInputPacket(movementSequence++, 0, 0)));
+            for (var recoveryTick = 0; recoveryTick < 3; recoveryTick++)
+            {
+                world.Update(TickSeconds);
+            }
+        }
+
+        Assert.True(world.TryGetPlayer(rangerConnectionId, out var ranger));
+        Assert.InRange(ranger.Health, 1, GameProtocol.MeleeSkillDamage);
     }
 
     private static void KillSecondPlayer(GameWorld world)

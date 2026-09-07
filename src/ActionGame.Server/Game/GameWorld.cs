@@ -145,7 +145,7 @@ public sealed class GameWorld
         serverTimeSeconds += deltaSeconds;
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
         var attackers = new List<PlayerState>();
-        var skillUsers = new List<PlayerState>();
+        var pendingSkills = new List<PendingSkill>();
         foreach (var player in playersByConnection.Values)
         {
             player.AttackTimeRemaining = Math.Max(
@@ -203,7 +203,7 @@ public sealed class GameWorld
                     player.AttackTimeRemaining = GameProtocol.MeleeSkillDuration;
                     player.SkillCooldownRemaining = GameProtocol.SkillCooldown;
                     player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
-                    skillUsers.Add(player);
+                    pendingSkills.Add(new PendingSkill(player, requestedAction.Value));
                 }
                 else if (requestedAction == ActionId.BasicAttack
                     && player.AttackCooldownRemaining <= 0f)
@@ -273,7 +273,7 @@ public sealed class GameWorld
             }
         }
 
-        ResolveSkills(skillUsers);
+        ResolveSkills(pendingSkills);
         ResolveAttacks(attackers);
         UpdateArrows(deltaSeconds);
 
@@ -453,71 +453,159 @@ public sealed class GameWorld
         }
     }
 
-    private void ResolveSkills(IReadOnlyList<PlayerState> skillUsers)
+    /// <summary>
+    /// Resolves every skill accepted for this tick from an immutable position snapshot.
+    /// Skill effects are committed before damage so container iteration order cannot
+    /// cancel another action that was valid at the start of the resolution phase.
+    /// </summary>
+    private void ResolveSkills(IReadOnlyList<PendingSkill> pendingSkills)
     {
-        foreach (var player in skillUsers)
+        if (pendingSkills.Count == 0)
         {
-            if (player.IsDead)
-            {
-                continue;
-            }
+            return;
+        }
 
-            if (player.PlayerId == GameProtocol.RangerPlayerId)
+        var playerSnapshots = playersByConnection.Values.ToDictionary(
+            player => player,
+            player => new SkillPlayerSnapshot(
+                player.X,
+                player.Y,
+                player.Z,
+                player.Facing,
+                player.IsDead));
+        var skillIntents = pendingSkills
+            .Select(pendingSkill =>
             {
-                SpawnArrow(player, isSkillArrow: true);
-                continue;
-            }
+                var snapshot = playerSnapshots[pendingSkill.Player];
+                return new SkillIntent(
+                    pendingSkill.Player,
+                    pendingSkill.ActionId,
+                    snapshot.X,
+                    snapshot.Y,
+                    snapshot.Z,
+                    snapshot.Facing);
+            })
+            .OrderBy(intent => intent.Player.PlayerId)
+            .ToArray();
+        var pendingHits = new Dictionary<PlayerState, PendingSkillHit>();
 
-            ResolveMeleeSkill(player);
+        foreach (var intent in skillIntents)
+        {
+            switch (intent.ActionId)
+            {
+                case ActionId.WarriorDashSlash:
+                    ResolveMeleeSkill(intent, playerSnapshots, pendingHits);
+                    break;
+                case ActionId.RangerPowerArrow:
+                    SpawnArrow(intent);
+                    break;
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported skill action: {intent.ActionId}.");
+            }
+        }
+
+        foreach (var pair in pendingHits)
+        {
+            ApplyDamage(
+                pair.Key,
+                pair.Value.Damage,
+                Math.Clamp(
+                    pair.Value.KnockbackVelocityX,
+                    -GameProtocol.MeleeSkillKnockbackSpeed,
+                    GameProtocol.MeleeSkillKnockbackSpeed),
+                pair.Value.HitStunDuration);
         }
     }
 
-    private void ResolveMeleeSkill(PlayerState attacker)
+    private static void ResolveMeleeSkill(
+        SkillIntent intent,
+        IReadOnlyDictionary<PlayerState, SkillPlayerSnapshot> playerSnapshots,
+        IDictionary<PlayerState, PendingSkillHit> pendingHits)
     {
-        var directionMultiplier = attacker.Facing == FacingDirection.Right ? 1f : -1f;
-        var startX = attacker.X;
+        var directionMultiplier = intent.Facing == FacingDirection.Right ? 1f : -1f;
+        var startX = intent.X;
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
         var endX = Math.Clamp(
             startX + (directionMultiplier * GameProtocol.MeleeSkillDashDistance),
             halfPlayerSize,
             GameProtocol.WorldWidth - halfPlayerSize);
-        attacker.X = endX;
-        attacker.KnockbackVelocityX = 0f;
+        intent.Player.X = endX;
+        intent.Player.KnockbackVelocityX = 0f;
 
-        foreach (var target in playersByConnection.Values)
+        foreach (var pair in playerSnapshots)
         {
-            if (ReferenceEquals(attacker, target)
-                || target.IsDead
-                || MathF.Abs(target.Y - attacker.Y) > GameProtocol.AttackDepthTolerance
-                || MathF.Abs(target.Z - attacker.Z) > GameProtocol.AttackHeightTolerance
-                || !TryGetArrowHitDistance(startX, endX, target.X, out _))
+            var target = pair.Key;
+            var targetSnapshot = pair.Value;
+            if (ReferenceEquals(intent.Player, target)
+                || targetSnapshot.IsDead
+                || MathF.Abs(targetSnapshot.Y - intent.Y)
+                    > GameProtocol.AttackDepthTolerance
+                || MathF.Abs(targetSnapshot.Z - intent.Z)
+                    > GameProtocol.AttackHeightTolerance
+                || !TryGetArrowHitDistance(
+                    startX,
+                    endX,
+                    targetSnapshot.X,
+                    out _))
             {
                 continue;
             }
 
-            ApplyDamage(
-                target,
-                GameProtocol.MeleeSkillDamage,
-                directionMultiplier * GameProtocol.MeleeSkillKnockbackSpeed,
-                GameProtocol.MeleeSkillHitStunDuration);
+            pendingHits.TryGetValue(target, out var hit);
+            pendingHits[target] = new PendingSkillHit(
+                hit.Damage + GameProtocol.MeleeSkillDamage,
+                hit.KnockbackVelocityX
+                    + (directionMultiplier * GameProtocol.MeleeSkillKnockbackSpeed),
+                Math.Max(
+                    hit.HitStunDuration,
+                    GameProtocol.MeleeSkillHitStunDuration));
         }
     }
 
+    private void SpawnArrow(SkillIntent intent)
+    {
+        SpawnArrow(
+            intent.Player.PlayerId,
+            intent.X,
+            intent.Y,
+            intent.Z,
+            intent.Facing,
+            isSkillArrow: true);
+    }
+
     private void SpawnArrow(PlayerState attacker, bool isSkillArrow)
+    {
+        SpawnArrow(
+            attacker.PlayerId,
+            attacker.X,
+            attacker.Y,
+            attacker.Z,
+            attacker.Facing,
+            isSkillArrow);
+    }
+
+    private void SpawnArrow(
+        int ownerPlayerId,
+        float x,
+        float y,
+        float z,
+        FacingDirection facing,
+        bool isSkillArrow)
     {
         if (arrows.Count >= GameProtocol.MaxArrows)
         {
             return;
         }
 
-        var directionMultiplier = attacker.Facing == FacingDirection.Right ? 1f : -1f;
+        var directionMultiplier = facing == FacingDirection.Right ? 1f : -1f;
         arrows.Add(new ArrowState(
             nextArrowId++,
-            attacker.PlayerId,
-            attacker.X + (directionMultiplier * GameProtocol.PlayerSize / 2f),
-            attacker.Y,
-            attacker.Z + GameProtocol.ArrowSpawnHeight,
-            attacker.Facing,
+            ownerPlayerId,
+            x + (directionMultiplier * GameProtocol.PlayerSize / 2f),
+            y,
+            z + GameProtocol.ArrowSpawnHeight,
+            facing,
             isSkillArrow));
     }
 
@@ -769,6 +857,28 @@ public sealed class GameWorld
     }
 
     private readonly record struct PendingHit(int Damage, float KnockbackVelocityX);
+
+    private readonly record struct PendingSkill(PlayerState Player, ActionId ActionId);
+
+    private readonly record struct SkillPlayerSnapshot(
+        float X,
+        float Y,
+        float Z,
+        FacingDirection Facing,
+        bool IsDead);
+
+    private readonly record struct SkillIntent(
+        PlayerState Player,
+        ActionId ActionId,
+        float X,
+        float Y,
+        float Z,
+        FacingDirection Facing);
+
+    private readonly record struct PendingSkillHit(
+        int Damage,
+        float KnockbackVelocityX,
+        float HitStunDuration);
 
     private sealed class ArrowState(
         int arrowId,
