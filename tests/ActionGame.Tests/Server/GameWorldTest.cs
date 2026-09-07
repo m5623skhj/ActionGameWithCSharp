@@ -667,19 +667,118 @@ public sealed class GameWorldTest
     }
 
     [Fact]
-    public void ReservedZInputDoesNotChangeActionState()
+    public void MeleeSkillDashesDamagesAndStartsCooldown()
+    {
+        var world = CreateWorldWithPlayersInAttackRange();
+        Assert.True(world.TryGetPlayer(10, out var beforeSkill));
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
+
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var player));
+        Assert.True(world.TryGetPlayer(20, out var target));
+
+        Assert.Equal(
+            beforeSkill.X + GameProtocol.MeleeSkillDashDistance,
+            player.X);
+        Assert.Equal(
+            GameProtocol.MaxHealth - GameProtocol.MeleeSkillDamage,
+            target.Health);
+        Assert.True(player.IsAttacking);
+        Assert.InRange(
+            player.SkillCooldownRemaining,
+            GameProtocol.SkillCooldown - TickSeconds,
+            GameProtocol.SkillCooldown);
+    }
+
+    [Fact]
+    public void SkillCannotBeRepeatedBeforeCooldownExpires()
     {
         var world = new GameWorld();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.ApplyInput(
             10,
-            new InputCommandPacket(1, 0, 0, InputActionFlags.ReservedZ)));
+            new InputCommandPacket(1, 0, 0, InputActionFlags.Skill)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var afterFirstSkill));
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var afterSecondRequest));
+
+        Assert.Equal(afterFirstSkill.X, afterSecondRequest.X);
+        Assert.True(afterSecondRequest.SkillCooldownRemaining > 0f);
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(4, 0, 0, InputActionFlags.None)));
+        var cooldownTicks = (int)(
+            GameProtocol.SkillCooldown * GameProtocol.SimulationRate);
+        for (var index = 0; index < cooldownTicks; index++)
+        {
+            world.Update(TickSeconds);
+        }
+
+        Assert.True(world.ApplyInput(
+            10,
+            new InputCommandPacket(5, 0, 0, InputActionFlags.Skill)));
+        world.Update(TickSeconds);
+        Assert.True(world.TryGetPlayer(10, out var afterCooldown));
+        Assert.Equal(
+            afterSecondRequest.X + GameProtocol.MeleeSkillDashDistance,
+            afterCooldown.X);
+    }
+
+    [Fact]
+    public void RangerSkillArrowHasExtendedPropertiesAndDealsSkillDamage()
+    {
+        var world = new GameWorld();
+        Assert.True(world.TryJoin(10, out _, out _));
+        Assert.True(world.TryJoin(20, out _, out _));
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(1, -1, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(2, 0, 0, InputActionFlags.None)));
+        world.Update(TickSeconds);
+        Assert.True(world.ApplyInput(
+            20,
+            new InputCommandPacket(3, 0, 0, InputActionFlags.Skill)));
 
         world.Update(TickSeconds);
-        Assert.True(world.TryGetPlayer(10, out var player));
+        var arrow = Assert.Single(world.CreateSnapshot().Arrows);
+        Assert.True(arrow.IsSkillArrow);
+        Assert.Equal(GameProtocol.RangerPlayerId, arrow.OwnerPlayerId);
 
-        Assert.Equal(0f, player.Z);
-        Assert.False(player.IsAttacking);
+        var maximumTicks = (int)MathF.Ceiling(
+            GameProtocol.RangerSkillArrowMaxDistance
+                / (GameProtocol.RangerSkillArrowSpeed * TickSeconds));
+        for (var index = 1; index < maximumTicks; index++)
+        {
+            world.Update(TickSeconds);
+            if (world.CreateSnapshot().Arrows.Length == 0)
+            {
+                break;
+            }
+        }
+
+        Assert.True(world.TryGetPlayer(10, out var target));
+        Assert.Equal(
+            GameProtocol.MaxHealth - GameProtocol.RangerSkillDamage,
+            target.Health);
+        Assert.Empty(world.CreateSnapshot().Arrows);
+
+        Assert.True(GameProtocol.RangerSkillArrowSpeed > GameProtocol.ArrowSpeed);
+        Assert.True(GameProtocol.RangerSkillArrowMaxDistance > GameProtocol.ArrowMaxDistance);
     }
 
     private static GameWorld CreateWorldWithPlayersInAttackRange()

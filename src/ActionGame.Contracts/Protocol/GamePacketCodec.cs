@@ -17,13 +17,15 @@ public static class GamePacketCodec
     private const int PlayerDeadOffset = PlayerHealthOffset + sizeof(int);
     private const int PlayerReviveSecondsOffset = PlayerDeadOffset + sizeof(byte);
     private const int PlayerInvulnerableOffset = PlayerReviveSecondsOffset + sizeof(byte);
-    private const int PlayerSnapshotSize = PlayerInvulnerableOffset + sizeof(byte);
+    private const int PlayerSkillCooldownOffset = PlayerInvulnerableOffset + sizeof(byte);
+    private const int PlayerSnapshotSize = PlayerSkillCooldownOffset + sizeof(float);
     private const int ArrowDirectionOffset = (2 * sizeof(int)) + (3 * sizeof(float));
-    private const int ArrowSnapshotSize = ArrowDirectionOffset + sizeof(byte);
+    private const int ArrowSkillOffset = ArrowDirectionOffset + sizeof(byte);
+    private const int ArrowSnapshotSize = ArrowSkillOffset + sizeof(byte);
     private const InputActionFlags ValidInputActions =
         InputActionFlags.Attack
         | InputActionFlags.Jump
-        | InputActionFlags.ReservedZ
+        | InputActionFlags.Skill
         | InputActionFlags.Revive;
 
     public static PacketType ReadPacketType(ReadOnlySpan<byte> payload)
@@ -188,6 +190,9 @@ public static class GamePacketCodec
             payload[offset + PlayerReviveSecondsOffset] = player.ReviveSecondsRemaining;
             payload[offset + PlayerInvulnerableOffset] =
                 player.IsInvulnerable ? (byte)1 : (byte)0;
+            BinaryPrimitives.WriteInt32LittleEndian(
+                payload.AsSpan(offset + PlayerSkillCooldownOffset),
+                BitConverter.SingleToInt32Bits(player.SkillCooldownRemaining));
             offset += PlayerSnapshotSize;
         }
 
@@ -208,6 +213,7 @@ public static class GamePacketCodec
                 BitConverter.SingleToInt32Bits(arrow.Z));
             payload[offset + ArrowDirectionOffset] =
                 unchecked((byte)(sbyte)arrow.Direction);
+            payload[offset + ArrowSkillOffset] = arrow.IsSkillArrow ? (byte)1 : (byte)0;
             offset += ArrowSnapshotSize;
         }
 
@@ -287,6 +293,10 @@ public static class GamePacketCodec
                 throw new InvalidDataException("Invalid invulnerable state value.");
             }
 
+            var skillCooldownRemaining = BitConverter.Int32BitsToSingle(
+                BinaryPrimitives.ReadInt32LittleEndian(
+                    payload[(offset + PlayerSkillCooldownOffset)..]));
+
             players[index] = new PlayerSnapshot(
                 playerId,
                 x,
@@ -297,7 +307,8 @@ public static class GamePacketCodec
                 health,
                 deadValue == 1,
                 payload[offset + PlayerReviveSecondsOffset],
-                invulnerableValue == 1);
+                invulnerableValue == 1,
+                skillCooldownRemaining);
             offset += PlayerSnapshotSize;
         }
 
@@ -318,13 +329,20 @@ public static class GamePacketCodec
                     payload[(offset + (2 * sizeof(int)) + (2 * sizeof(float)))..]));
             var direction = (FacingDirection)unchecked(
                 (sbyte)payload[offset + ArrowDirectionOffset]);
+            var skillValue = payload[offset + ArrowSkillOffset];
+            if (skillValue > 1)
+            {
+                throw new InvalidDataException("Invalid skill arrow state value.");
+            }
+
             arrows[index] = new ArrowSnapshot(
                 arrowId,
                 ownerPlayerId,
                 x,
                 y,
                 z,
-                direction);
+                direction,
+                skillValue == 1);
             offset += ArrowSnapshotSize;
         }
 
@@ -433,6 +451,14 @@ public static class GamePacketCodec
             if (player.IsDead && player.IsInvulnerable)
             {
                 throw createException("A dead player cannot be invulnerable.");
+            }
+
+            if (!float.IsFinite(player.SkillCooldownRemaining)
+                || player.SkillCooldownRemaining < 0f
+                || player.SkillCooldownRemaining > GameProtocol.SkillCooldown)
+            {
+                throw createException(
+                    $"Invalid skill cooldown: {player.SkillCooldownRemaining}.");
             }
         }
     }

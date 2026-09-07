@@ -15,6 +15,9 @@ public sealed class ActionGameClientGame : Game
     private readonly CancellationTokenSource shutdown = new();
     private readonly Dictionary<int, PlayerSnapshot> players = [];
     private readonly HitVisualEffectRenderer hitVisualEffects = new();
+    private readonly ActionCommandQueue commandQueue = new();
+    private static readonly CommandInput[] SkillCommand =
+        [CommandInput.Down, CommandInput.Forward, CommandInput.Skill];
     private ArrowSnapshot[] arrows = [];
     private SpriteBatch? spriteBatch;
     private Texture2D? pixel;
@@ -84,7 +87,7 @@ public sealed class ActionGameClientGame : Game
         var elapsedSeconds = (float)gameTime.ElapsedGameTime.TotalSeconds;
         characterRenderer?.Update(elapsedSeconds);
         hitVisualEffects.Update(elapsedSeconds);
-        CaptureActionPresses(keyboard);
+        CaptureActionPresses(keyboard, gameTime.TotalGameTime.TotalSeconds);
         QueueInput(keyboard, gameTime.ElapsedGameTime.TotalSeconds);
         previousKeyboard = keyboard;
         base.Update(gameTime);
@@ -139,6 +142,7 @@ public sealed class ActionGameClientGame : Game
             && players.TryGetValue(localPlayerId.Value, out var localPlayer))
         {
             revivePromptRenderer?.Draw(spriteBatch, pixel, localPlayer);
+            DrawSkillCooldown(spriteBatch, pixel, localPlayer);
         }
 
         spriteBatch.End();
@@ -198,6 +202,7 @@ public sealed class ActionGameClientGame : Game
                     arrows = [];
                     characterRenderer?.Reset();
                     hitVisualEffects.Reset();
+                    commandQueue.Clear();
                     connectionStatus = $"Disconnected: {disconnected.Message}";
                     break;
             }
@@ -251,10 +256,10 @@ public sealed class ActionGameClientGame : Game
                     keyboard.IsKeyDown(Keys.Up),
                     keyboard.IsKeyDown(Keys.Down));
             var allowedActions = isDead
-                ? InputActionFlags.Revive | InputActionFlags.ReservedZ
+                ? InputActionFlags.Revive
                 : InputActionFlags.Attack
                     | InputActionFlags.Jump
-                    | InputActionFlags.ReservedZ;
+                    | InputActionFlags.Skill;
             var actions = pendingActionPresses & allowedActions;
             if (keyboard.IsKeyDown(Keys.X))
             {
@@ -268,9 +273,9 @@ public sealed class ActionGameClientGame : Game
                 actions |= InputActionFlags.Jump;
             }
 
-            if (keyboard.IsKeyDown(Keys.Z))
+            if (!isDead && keyboard.IsKeyDown(Keys.Z))
             {
-                actions |= InputActionFlags.ReservedZ;
+                actions |= InputActionFlags.Skill;
             }
 
             var payload = GamePacketCodec.EncodeInputCommand(
@@ -286,7 +291,7 @@ public sealed class ActionGameClientGame : Game
         }
     }
 
-    private void CaptureActionPresses(KeyboardState keyboard)
+    private void CaptureActionPresses(KeyboardState keyboard, double timeSeconds)
     {
         var isDead = IsLocalPlayerDead();
         LatchPressedAction(
@@ -296,9 +301,45 @@ public sealed class ActionGameClientGame : Game
         if (!isDead)
         {
             LatchPressedAction(keyboard, Keys.C, InputActionFlags.Jump);
+            CaptureCommandInputs(keyboard, timeSeconds);
+            LatchPressedAction(keyboard, Keys.Z, InputActionFlags.Skill);
+        }
+        else
+        {
+            commandQueue.Clear();
+        }
+    }
+
+    private void CaptureCommandInputs(KeyboardState keyboard, double timeSeconds)
+    {
+        if (WasPressed(keyboard, Keys.Down))
+        {
+            commandQueue.Enqueue(CommandInput.Down, timeSeconds);
         }
 
-        LatchPressedAction(keyboard, Keys.Z, InputActionFlags.ReservedZ);
+        var facing = localPlayerId.HasValue
+            && players.TryGetValue(localPlayerId.Value, out var player)
+            ? player.Facing
+            : FacingDirection.Right;
+        var forwardKey = facing == FacingDirection.Right ? Keys.Right : Keys.Left;
+        if (WasPressed(keyboard, forwardKey))
+        {
+            commandQueue.Enqueue(CommandInput.Forward, timeSeconds);
+        }
+
+        if (!WasPressed(keyboard, Keys.Z))
+        {
+            return;
+        }
+
+        commandQueue.Enqueue(CommandInput.Skill, timeSeconds);
+        if (commandQueue.TryConsume(
+            SkillCommand,
+            timeSeconds,
+            GameProtocol.SkillCommandWindow))
+        {
+            pendingActionPresses |= InputActionFlags.Skill;
+        }
     }
 
     private bool IsLocalPlayerDead()
@@ -319,9 +360,14 @@ public sealed class ActionGameClientGame : Game
         }
     }
 
+    private bool WasPressed(KeyboardState keyboard, Keys key)
+    {
+        return keyboard.IsKeyDown(key) && previousKeyboard.IsKeyUp(key);
+    }
+
     private void UpdateWindowTitle()
     {
-        Window.Title = $"Action Game - {connectionStatus} - Arrows / X Attack-Revive / C / Z / Esc";
+        Window.Title = $"Action Game - {connectionStatus} - Arrows / X Attack-Revive / C Jump / Z Skill / Esc";
     }
 
     private static sbyte GetAxis(bool negative, bool positive)
@@ -389,25 +435,89 @@ public sealed class ActionGameClientGame : Game
         Texture2D pixel,
         ArrowSnapshot arrow)
     {
-        const int shaftLength = 16;
+        var shaftLength = arrow.IsSkillArrow ? 24 : 16;
+        var shaftHeight = arrow.IsSkillArrow ? 4 : 2;
         var tipX = (int)MathF.Round(arrow.X);
         var y = (int)MathF.Round(arrow.Y - arrow.Z);
         var isFacingRight = arrow.Direction == FacingDirection.Right;
         var shaftX = isFacingRight ? tipX - shaftLength : tipX;
         var tailX = isFacingRight ? shaftX : shaftX + shaftLength - 2;
-        var headX = isFacingRight ? tipX - 3 : tipX;
+        var headWidth = arrow.IsSkillArrow ? 5 : 3;
+        var headX = isFacingRight ? tipX - headWidth : tipX;
+
+        if (arrow.IsSkillArrow)
+        {
+            spriteBatch.Draw(
+                pixel,
+                new Rectangle(shaftX - 2, y - 3, shaftLength + 4, 10),
+                new Color(80, 205, 255, 75));
+        }
 
         spriteBatch.Draw(
             pixel,
-            new Rectangle(shaftX, y, shaftLength, 2),
-            new Color(135, 88, 45));
+            new Rectangle(shaftX, y, shaftLength, shaftHeight),
+            arrow.IsSkillArrow ? new Color(215, 245, 255) : new Color(135, 88, 45));
         spriteBatch.Draw(
             pixel,
-            new Rectangle(headX, y - 2, 3, 6),
-            new Color(205, 210, 220));
+            new Rectangle(headX, y - 2, headWidth, arrow.IsSkillArrow ? 8 : 6),
+            arrow.IsSkillArrow ? new Color(80, 205, 255) : new Color(205, 210, 220));
         spriteBatch.Draw(
             pixel,
             new Rectangle(tailX, y - 2, 2, 6),
             new Color(180, 65, 55));
+    }
+
+    private static void DrawSkillCooldown(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        PlayerSnapshot player)
+    {
+        if (player.IsDead)
+        {
+            return;
+        }
+
+        const int x = 18;
+        const int y = (int)GameProtocol.WorldHeight - 24;
+        const int width = 124;
+        const int height = 10;
+        var readyRatio = 1f - Math.Clamp(
+            player.SkillCooldownRemaining / GameProtocol.SkillCooldown,
+            0f,
+            1f);
+        var fillWidth = (int)MathF.Round((width - 4) * readyRatio);
+        spriteBatch.Draw(
+            pixel,
+            new Rectangle(x, y, width, height),
+            new Color(12, 15, 20, 220));
+        if (fillWidth > 0)
+        {
+            var color = player.SkillCooldownRemaining <= 0f
+                ? new Color(80, 225, 145)
+                : new Color(70, 150, 215);
+            spriteBatch.Draw(pixel, new Rectangle(x + 2, y + 2, fillWidth, height - 4), color);
+        }
+
+        DrawPixelZ(
+            spriteBatch,
+            pixel,
+            x + width + 7,
+            y,
+            player.SkillCooldownRemaining <= 0f);
+    }
+
+    private static void DrawPixelZ(
+        SpriteBatch spriteBatch,
+        Texture2D pixel,
+        int x,
+        int y,
+        bool isReady)
+    {
+        var color = isReady ? new Color(235, 255, 240) : new Color(120, 130, 145);
+        spriteBatch.Draw(pixel, new Rectangle(x, y, 9, 2), color);
+        spriteBatch.Draw(pixel, new Rectangle(x + 6, y + 2, 3, 2), color);
+        spriteBatch.Draw(pixel, new Rectangle(x + 3, y + 4, 3, 2), color);
+        spriteBatch.Draw(pixel, new Rectangle(x, y + 6, 3, 2), color);
+        spriteBatch.Draw(pixel, new Rectangle(x, y + 8, 9, 2), color);
     }
 }

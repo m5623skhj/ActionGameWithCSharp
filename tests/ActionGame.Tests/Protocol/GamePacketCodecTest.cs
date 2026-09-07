@@ -11,7 +11,7 @@ public sealed class GamePacketCodecTest
             42,
             -1,
             1,
-            InputActionFlags.Revive | InputActionFlags.ReservedZ);
+            InputActionFlags.Revive | InputActionFlags.Skill);
 
         var actual = GamePacketCodec.DecodeInputCommand(
             GamePacketCodec.EncodeInputCommand(expected));
@@ -35,7 +35,8 @@ public sealed class GamePacketCodecTest
                     80,
                     false,
                     0,
-                    true),
+                    true,
+                    2.5f),
                 new PlayerSnapshot(
                     2,
                     700f,
@@ -46,7 +47,8 @@ public sealed class GamePacketCodecTest
                     0,
                     true,
                     3,
-                    false),
+                    false,
+                    0f),
             ],
             [
                 new ArrowSnapshot(
@@ -55,7 +57,8 @@ public sealed class GamePacketCodecTest
                     320f,
                     200f,
                     63f,
-                    FacingDirection.Right),
+                    FacingDirection.Right,
+                    true),
             ]);
 
         var actual = GamePacketCodec.DecodeWorldSnapshot(
@@ -113,7 +116,8 @@ public sealed class GamePacketCodecTest
                     GameProtocol.MaxHealth,
                     false,
                     0,
-                    false),
+                    false,
+                    0f),
                 new PlayerSnapshot(
                     1,
                     20f,
@@ -124,7 +128,8 @@ public sealed class GamePacketCodecTest
                     GameProtocol.MaxHealth,
                     false,
                     0,
-                    false),
+                    false,
+                    0f),
             ],
             []);
 
@@ -148,7 +153,8 @@ public sealed class GamePacketCodecTest
                     0,
                     false,
                     0,
-                    false),
+                    false,
+                    0f),
             ],
             []);
 

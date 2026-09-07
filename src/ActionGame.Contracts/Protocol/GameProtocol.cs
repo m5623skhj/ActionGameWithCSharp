@@ -2,7 +2,7 @@ namespace ActionGame.Contracts.Protocol;
 
 public static class GameProtocol
 {
-    public const byte Version = 7;
+    public const byte Version = 8;
     public const int MaxPlayers = 2;
     public const int RangerPlayerId = 2;
     public const int MaxArrows = 16;
@@ -29,11 +29,23 @@ public static class GameProtocol
     public const float MeleeHitStunDuration = 0.25f;
     public const float ArrowHitStunDuration = 0.12f;
     public const float HitInvulnerabilityDuration = 0.30f;
+    public const float SkillCooldown = 4f;
+    public const float SkillCommandWindow = 0.6f;
+    public const float MeleeSkillDuration = 0.28f;
+    public const float MeleeSkillDashDistance = 100f;
+    public const int MeleeSkillDamage = 30;
+    public const float MeleeSkillKnockbackSpeed = 360f;
+    public const float MeleeSkillHitStunDuration = 0.35f;
     public const float ArrowSpeed = 480f;
     public const float ArrowMaxDistance = 360f;
     public const float ArrowSpawnHeight = 28f;
     public const float ArrowDepthTolerance = 18f;
     public const float ArrowHeightTolerance = 32f;
+    public const int RangerSkillDamage = 25;
+    public const float RangerSkillArrowSpeed = 720f;
+    public const float RangerSkillArrowMaxDistance = 600f;
+    public const float RangerSkillKnockbackSpeed = 260f;
+    public const float RangerSkillHitStunDuration = 0.25f;
     public const int ReviveDelaySeconds = 5;
     public const int SimulationRate = 20;
     public const int DefaultPort = 7777;
@@ -45,7 +57,7 @@ public enum InputActionFlags : byte
     None = 0,
     Attack = 1 << 0,
     Jump = 1 << 1,
-    ReservedZ = 1 << 2,
+    Skill = 1 << 2,
     Revive = 1 << 3,
 }
 
@@ -91,7 +103,8 @@ public readonly record struct PlayerSnapshot(
     int Health,
     bool IsDead,
     byte ReviveSecondsRemaining,
-    bool IsInvulnerable);
+    bool IsInvulnerable,
+    float SkillCooldownRemaining);
 
 public readonly record struct ArrowSnapshot(
     int ArrowId,
@@ -99,7 +112,8 @@ public readonly record struct ArrowSnapshot(
     float X,
     float Y,
     float Z,
-    FacingDirection Direction);
+    FacingDirection Direction,
+    bool IsSkillArrow);
 
 public sealed record WorldSnapshotPacket(
     long ServerTick,

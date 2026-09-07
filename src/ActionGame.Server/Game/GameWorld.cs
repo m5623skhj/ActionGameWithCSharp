@@ -66,7 +66,7 @@ public sealed class GameWorld
 
         const InputActionFlags validActions = InputActionFlags.Attack
             | InputActionFlags.Jump
-            | InputActionFlags.ReservedZ
+            | InputActionFlags.Skill
             | InputActionFlags.Revive;
         if ((input.Actions & ~validActions) != 0)
         {
@@ -91,6 +91,7 @@ public sealed class GameWorld
             player.Depth = 0;
             player.PendingAttack = false;
             player.PendingJump = false;
+            player.PendingSkill = false;
             player.PendingRevive |= IsPressed(
                 input.Actions,
                 player.HeldActions,
@@ -119,6 +120,10 @@ public sealed class GameWorld
             input.Actions,
             player.HeldActions,
             InputActionFlags.Jump);
+        player.PendingSkill |= IsPressed(
+            input.Actions,
+            player.HeldActions,
+            InputActionFlags.Skill);
         player.HeldActions = input.Actions;
         return true;
     }
@@ -133,6 +138,7 @@ public sealed class GameWorld
         serverTimeSeconds += deltaSeconds;
         var halfPlayerSize = GameProtocol.PlayerSize / 2f;
         var attackers = new List<PlayerState>();
+        var skillUsers = new List<PlayerState>();
         foreach (var player in playersByConnection.Values)
         {
             player.AttackTimeRemaining = Math.Max(
@@ -147,6 +153,9 @@ public sealed class GameWorld
             player.InvulnerabilityTimeRemaining = Math.Max(
                 0f,
                 player.InvulnerabilityTimeRemaining - deltaSeconds);
+            player.SkillCooldownRemaining = Math.Max(
+                0f,
+                player.SkillCooldownRemaining - deltaSeconds);
             if (player.IsDead)
             {
                 var reviveRequested = player.PendingRevive;
@@ -160,6 +169,7 @@ public sealed class GameWorld
                 ClearControllableState(player, clearHeldActions: false);
                 player.AttackTimeRemaining = 0f;
                 player.AttackCooldownRemaining = 0f;
+                player.SkillCooldownRemaining = 0f;
                 player.VerticalVelocity = 0f;
                 player.KnockbackVelocityX = 0f;
                 player.HitStunTimeRemaining = 0f;
@@ -179,7 +189,14 @@ public sealed class GameWorld
                     player.VerticalVelocity = GameProtocol.JumpInitialVelocity;
                 }
 
-                if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
+                if (player.PendingSkill && player.SkillCooldownRemaining <= 0f)
+                {
+                    player.AttackTimeRemaining = GameProtocol.MeleeSkillDuration;
+                    player.SkillCooldownRemaining = GameProtocol.SkillCooldown;
+                    player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
+                    skillUsers.Add(player);
+                }
+                else if (player.PendingAttack && player.AttackCooldownRemaining <= 0f)
                 {
                     player.AttackTimeRemaining = GameProtocol.AttackDuration;
                     player.AttackCooldownRemaining = GameProtocol.AttackCooldown;
@@ -188,6 +205,7 @@ public sealed class GameWorld
 
                 player.PendingJump = false;
                 player.PendingAttack = false;
+                player.PendingSkill = false;
             }
 
             var horizontal = (float)player.Horizontal;
@@ -248,6 +266,7 @@ public sealed class GameWorld
             }
         }
 
+        ResolveSkills(skillUsers);
         ResolveAttacks(attackers);
         UpdateArrows(deltaSeconds);
 
@@ -268,7 +287,8 @@ public sealed class GameWorld
                 player.Health,
                 player.IsDead,
                 GetReviveSecondsRemaining(player),
-                player.InvulnerabilityTimeRemaining > 0f))
+                player.InvulnerabilityTimeRemaining > 0f,
+                player.SkillCooldownRemaining))
             .ToArray();
         var arrowSnapshots = arrows
             .OrderBy(arrow => arrow.ArrowId)
@@ -278,7 +298,8 @@ public sealed class GameWorld
                 arrow.X,
                 arrow.Y,
                 arrow.Z,
-                arrow.Direction))
+                arrow.Direction,
+                arrow.IsSkillArrow))
             .ToArray();
         return new WorldSnapshotPacket(ServerTick, players, arrowSnapshots);
     }
@@ -297,7 +318,8 @@ public sealed class GameWorld
                 state.Health,
                 state.IsDead,
                 GetReviveSecondsRemaining(state),
-                state.InvulnerabilityTimeRemaining > 0f);
+                state.InvulnerabilityTimeRemaining > 0f,
+                state.SkillCooldownRemaining);
             return true;
         }
 
@@ -344,7 +366,7 @@ public sealed class GameWorld
         {
             if (attacker.PlayerId == GameProtocol.RangerPlayerId)
             {
-                SpawnArrow(attacker);
+                SpawnArrow(attacker, isSkillArrow: false);
                 continue;
             }
 
@@ -381,7 +403,57 @@ public sealed class GameWorld
         }
     }
 
-    private void SpawnArrow(PlayerState attacker)
+    private void ResolveSkills(IReadOnlyList<PlayerState> skillUsers)
+    {
+        foreach (var player in skillUsers)
+        {
+            if (player.IsDead)
+            {
+                continue;
+            }
+
+            if (player.PlayerId == GameProtocol.RangerPlayerId)
+            {
+                SpawnArrow(player, isSkillArrow: true);
+                continue;
+            }
+
+            ResolveMeleeSkill(player);
+        }
+    }
+
+    private void ResolveMeleeSkill(PlayerState attacker)
+    {
+        var directionMultiplier = attacker.Facing == FacingDirection.Right ? 1f : -1f;
+        var startX = attacker.X;
+        var halfPlayerSize = GameProtocol.PlayerSize / 2f;
+        var endX = Math.Clamp(
+            startX + (directionMultiplier * GameProtocol.MeleeSkillDashDistance),
+            halfPlayerSize,
+            GameProtocol.WorldWidth - halfPlayerSize);
+        attacker.X = endX;
+        attacker.KnockbackVelocityX = 0f;
+
+        foreach (var target in playersByConnection.Values)
+        {
+            if (ReferenceEquals(attacker, target)
+                || target.IsDead
+                || MathF.Abs(target.Y - attacker.Y) > GameProtocol.AttackDepthTolerance
+                || MathF.Abs(target.Z - attacker.Z) > GameProtocol.AttackHeightTolerance
+                || !TryGetArrowHitDistance(startX, endX, target.X, out _))
+            {
+                continue;
+            }
+
+            ApplyDamage(
+                target,
+                GameProtocol.MeleeSkillDamage,
+                directionMultiplier * GameProtocol.MeleeSkillKnockbackSpeed,
+                GameProtocol.MeleeSkillHitStunDuration);
+        }
+    }
+
+    private void SpawnArrow(PlayerState attacker, bool isSkillArrow)
     {
         if (arrows.Count >= GameProtocol.MaxArrows)
         {
@@ -395,7 +467,8 @@ public sealed class GameWorld
             attacker.X + (directionMultiplier * GameProtocol.PlayerSize / 2f),
             attacker.Y,
             attacker.Z + GameProtocol.ArrowSpawnHeight,
-            attacker.Facing));
+            attacker.Facing,
+            isSkillArrow));
     }
 
     private void UpdateArrows(float deltaSeconds)
@@ -403,7 +476,7 @@ public sealed class GameWorld
         for (var index = arrows.Count - 1; index >= 0; index--)
         {
             var arrow = arrows[index];
-            var remainingDistance = GameProtocol.ArrowMaxDistance - arrow.DistanceTraveled;
+            var remainingDistance = arrow.MaximumDistance - arrow.DistanceTraveled;
             if (remainingDistance <= 0f)
             {
                 arrows.RemoveAt(index);
@@ -411,7 +484,7 @@ public sealed class GameWorld
             }
 
             var travelDistance = MathF.Min(
-                GameProtocol.ArrowSpeed * deltaSeconds,
+                arrow.Speed * deltaSeconds,
                 remainingDistance);
             var directionMultiplier = arrow.Direction == FacingDirection.Right ? 1f : -1f;
             var previousX = arrow.X;
@@ -420,20 +493,20 @@ public sealed class GameWorld
             if (target is not null)
             {
                 var knockbackVelocityX = arrow.Direction == FacingDirection.Right
-                    ? GameProtocol.ArrowKnockbackSpeed
-                    : -GameProtocol.ArrowKnockbackSpeed;
+                    ? arrow.KnockbackSpeed
+                    : -arrow.KnockbackSpeed;
                 ApplyDamage(
                     target,
-                    GameProtocol.RangerAttackDamage,
+                    arrow.Damage,
                     knockbackVelocityX,
-                    GameProtocol.ArrowHitStunDuration);
+                    arrow.HitStunDuration);
                 arrows.RemoveAt(index);
                 continue;
             }
 
             arrow.X = nextX;
             arrow.DistanceTraveled += travelDistance;
-            if (arrow.DistanceTraveled >= GameProtocol.ArrowMaxDistance
+            if (arrow.DistanceTraveled >= arrow.MaximumDistance
                 || arrow.X < 0f
                 || arrow.X > GameProtocol.WorldWidth)
             {
@@ -536,6 +609,7 @@ public sealed class GameWorld
         ClearControllableState(player, clearHeldActions: true);
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
+        player.SkillCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
         player.KnockbackVelocityX = 0f;
         player.HitStunTimeRemaining = 0f;
@@ -572,6 +646,7 @@ public sealed class GameWorld
         ClearControllableState(player, clearHeldActions: false);
         player.AttackTimeRemaining = 0f;
         player.AttackCooldownRemaining = 0f;
+        player.SkillCooldownRemaining = 0f;
         player.VerticalVelocity = 0f;
         player.KnockbackVelocityX = 0f;
         player.HitStunTimeRemaining = 0f;
@@ -597,6 +672,7 @@ public sealed class GameWorld
         player.Depth = 0;
         player.PendingAttack = false;
         player.PendingJump = false;
+        player.PendingSkill = false;
         player.PendingRevive = false;
         if (clearHeldActions)
         {
@@ -630,6 +706,8 @@ public sealed class GameWorld
 
         public float AttackCooldownRemaining { get; set; }
 
+        public float SkillCooldownRemaining { get; set; }
+
         public int Health { get; set; } = GameProtocol.MaxHealth;
 
         public bool IsDead => Health == 0;
@@ -643,6 +721,8 @@ public sealed class GameWorld
         public bool PendingAttack { get; set; }
 
         public bool PendingJump { get; set; }
+
+        public bool PendingSkill { get; set; }
 
         public bool PendingRevive { get; set; }
 
@@ -659,7 +739,8 @@ public sealed class GameWorld
         float x,
         float y,
         float z,
-        FacingDirection direction)
+        FacingDirection direction,
+        bool isSkillArrow)
     {
         public int ArrowId { get; } = arrowId;
 
@@ -672,6 +753,28 @@ public sealed class GameWorld
         public float Z { get; } = z;
 
         public FacingDirection Direction { get; } = direction;
+
+        public bool IsSkillArrow { get; } = isSkillArrow;
+
+        public int Damage { get; } = isSkillArrow
+            ? GameProtocol.RangerSkillDamage
+            : GameProtocol.RangerAttackDamage;
+
+        public float Speed { get; } = isSkillArrow
+            ? GameProtocol.RangerSkillArrowSpeed
+            : GameProtocol.ArrowSpeed;
+
+        public float MaximumDistance { get; } = isSkillArrow
+            ? GameProtocol.RangerSkillArrowMaxDistance
+            : GameProtocol.ArrowMaxDistance;
+
+        public float KnockbackSpeed { get; } = isSkillArrow
+            ? GameProtocol.RangerSkillKnockbackSpeed
+            : GameProtocol.ArrowKnockbackSpeed;
+
+        public float HitStunDuration { get; } = isSkillArrow
+            ? GameProtocol.RangerSkillHitStunDuration
+            : GameProtocol.ArrowHitStunDuration;
 
         public float DistanceTraveled { get; set; }
     }

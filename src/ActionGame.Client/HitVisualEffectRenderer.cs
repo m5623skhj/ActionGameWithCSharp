@@ -127,14 +127,19 @@ internal sealed class HitVisualEffectRenderer
         HitEffect effect)
     {
         var progress = effect.ElapsedSeconds / ImpactDuration;
-        var isMeleeHit = effect.Damage >= GameProtocol.AttackDamage;
+        var isMeleeHit = effect.Damage == GameProtocol.AttackDamage
+            || effect.Damage == GameProtocol.MeleeSkillDamage;
+        var isSkillHit = effect.Damage == GameProtocol.MeleeSkillDamage
+            || effect.Damage == GameProtocol.RangerSkillDamage;
         var radius = MathHelper.Lerp(
             isMeleeHit ? 5f : 4f,
-            isMeleeHit ? 20f : 14f,
+            isSkillHit ? 24f : isMeleeHit ? 20f : 14f,
             progress);
-        var color = (isMeleeHit
-            ? new Color(255, 220, 90)
-            : new Color(195, 225, 170)) * (1f - progress);
+        var color = (effect.Damage == GameProtocol.RangerSkillDamage
+            ? new Color(95, 220, 255)
+            : isMeleeHit
+                ? new Color(255, 220, 90)
+                : new Color(195, 225, 170)) * (1f - progress);
         var directionCount = isMeleeHit ? BurstDirections.Length : 4;
         for (var index = 0; index < directionCount; index++)
         {
