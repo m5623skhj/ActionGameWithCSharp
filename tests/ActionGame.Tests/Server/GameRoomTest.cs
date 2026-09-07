@@ -3,14 +3,14 @@ using ActionGame.Server.Game;
 
 namespace ActionGame.Tests.Server;
 
-public sealed class GameWorldTest
+public sealed class GameRoomTest
 {
     private const float TickSeconds = 1f / GameProtocol.SimulationRate;
 
     [Fact]
     public void ThirdPlayerIsRejectedWhenWorldIsFull()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
 
         Assert.True(world.TryJoin(10, out var firstId, out _));
         Assert.True(world.TryJoin(20, out var secondId, out _));
@@ -24,7 +24,7 @@ public sealed class GameWorldTest
     [Fact]
     public void DuplicateJoinIsRejected()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
 
         Assert.False(world.TryJoin(10, out var playerId, out var rejectionReason));
@@ -36,7 +36,7 @@ public sealed class GameWorldTest
     [Fact]
     public void ServerAppliesLatestInputAndRejectsStaleSequence()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryGetPlayer(10, out var initial));
 
@@ -59,7 +59,7 @@ public sealed class GameWorldTest
     [Fact]
     public void ActionCommandsUseAnIndependentSequence()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
 
         Assert.True(world.ApplyActionCommand(
@@ -82,7 +82,7 @@ public sealed class GameWorldTest
     [Fact]
     public void CharacterSpecificActionForAnotherCharacterIsRejected()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
 
@@ -104,8 +104,8 @@ public sealed class GameWorldTest
     [Fact]
     public void DiagonalInputIsNormalizedBeforeAxisSpeedsAreApplied()
     {
-        var horizontalWorld = new GameWorld();
-        var diagonalWorld = new GameWorld();
+        var horizontalWorld = new GameRoom();
+        var diagonalWorld = new GameRoom();
         Assert.True(horizontalWorld.TryJoin(10, out _, out _));
         Assert.True(diagonalWorld.TryJoin(10, out _, out _));
         Assert.True(horizontalWorld.ApplyMovementInput(
@@ -136,7 +136,7 @@ public sealed class GameWorldTest
     [Fact]
     public void PlayerPositionIsClampedInsideWorld()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.ApplyMovementInput(
             10,
@@ -151,7 +151,7 @@ public sealed class GameWorldTest
     [Fact]
     public void LeavingPlayerReleasesItsSlot()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out var firstId, out _));
 
         Assert.True(world.Leave(10));
@@ -164,7 +164,7 @@ public sealed class GameWorldTest
     [Fact]
     public void OutOfRangeInputIsRejectedAtWorldBoundary()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -176,7 +176,7 @@ public sealed class GameWorldTest
     [Fact]
     public void JumpUsesServerGravityAndLandsOnGround()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.ApplyActionCommand(
             10,
@@ -198,8 +198,8 @@ public sealed class GameWorldTest
     [Fact]
     public void JumpPressedAgainWhileAirborneDoesNotDoubleJump()
     {
-        var secondPressWorld = new GameWorld();
-        var controlWorld = new GameWorld();
+        var secondPressWorld = new GameRoom();
+        var controlWorld = new GameRoom();
         Assert.True(secondPressWorld.TryJoin(10, out _, out _));
         Assert.True(controlWorld.TryJoin(10, out _, out _));
 
@@ -231,7 +231,7 @@ public sealed class GameWorldTest
     [Fact]
     public void AttackUsesFacingAndExpires()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.ApplyMovementInput(
             10,
@@ -420,7 +420,7 @@ public sealed class GameWorldTest
     [Fact]
     public void KnockbackStopsAtWorldBoundary()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
         Assert.True(world.ApplyMovementInput(
@@ -706,7 +706,7 @@ public sealed class GameWorldTest
     [Fact]
     public void SkillCannotBeRepeatedBeforeCooldownExpires()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.ApplyActionCommand(
             10,
@@ -743,7 +743,7 @@ public sealed class GameWorldTest
     [Fact]
     public void RangerSkillArrowHasExtendedPropertiesAndDealsSkillDamage()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
         Assert.True(world.ApplyMovementInput(
@@ -810,9 +810,9 @@ public sealed class GameWorldTest
         Assert.True(arrow.IsSkillArrow);
     }
 
-    private static GameWorld CreateWorldWithPlayersInAttackRange()
+    private static GameRoom CreateWorldWithPlayersInAttackRange()
     {
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(10, out _, out _));
         Assert.True(world.TryJoin(20, out _, out _));
         MovePlayersIntoAttackRange(world, 10, 20);
@@ -820,7 +820,7 @@ public sealed class GameWorldTest
     }
 
     private static (
-        GameWorld World,
+        GameRoom World,
         long WarriorConnectionId,
         long RangerConnectionId) CreateLethalSameTickSkillWorld(
             bool rangerStoredFirst)
@@ -828,7 +828,7 @@ public sealed class GameWorldTest
         const long initialWarriorConnectionId = 10;
         const long rangerConnectionId = 20;
         var warriorConnectionId = initialWarriorConnectionId;
-        var world = new GameWorld();
+        var world = new GameRoom();
         Assert.True(world.TryJoin(initialWarriorConnectionId, out _, out _));
         Assert.True(world.TryJoin(rangerConnectionId, out _, out _));
         if (rangerStoredFirst)
@@ -854,7 +854,7 @@ public sealed class GameWorldTest
     }
 
     private static void MovePlayersIntoAttackRange(
-        GameWorld world,
+        GameRoom world,
         long warriorConnectionId,
         long rangerConnectionId)
     {
@@ -879,7 +879,7 @@ public sealed class GameWorldTest
     }
 
     private static void DamageRangerToLethalSkillRange(
-        GameWorld world,
+        GameRoom world,
         long warriorConnectionId,
         long rangerConnectionId)
     {
@@ -918,7 +918,7 @@ public sealed class GameWorldTest
         Assert.InRange(ranger.Health, 1, GameProtocol.MeleeSkillDamage);
     }
 
-    private static void KillSecondPlayer(GameWorld world)
+    private static void KillSecondPlayer(GameRoom world)
     {
         uint sequence = 3;
         var attackCount = GameProtocol.MaxHealth / GameProtocol.AttackDamage;

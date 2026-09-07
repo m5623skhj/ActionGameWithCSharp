@@ -11,7 +11,7 @@ internal sealed class GameServerCoordinator(
     CancellationToken serverCancellationToken)
 {
     private const long IdleTickLimit = GameProtocol.SimulationRate * 5L;
-    private readonly GameWorld world = new();
+    private readonly GameRoom room = new();
     private readonly Dictionary<long, PeerState> peers = [];
     private readonly List<ClientPeer> stoppedPeers = [];
 
@@ -84,7 +84,7 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        if (!world.TryJoin(
+        if (!room.TryJoin(
             join.ConnectionId,
             out var playerId,
             out var rejectionReason))
@@ -99,7 +99,7 @@ internal sealed class GameServerCoordinator(
             eventWriter,
             serverCancellationToken);
         peer.Start();
-        peers.Add(join.ConnectionId, new PeerState(peer, world.ServerTick));
+        peers.Add(join.ConnectionId, new PeerState(peer, room.ServerTick));
         Console.WriteLine($"Player {playerId} joined on connection {join.ConnectionId}.");
 
         QueueOrRemove(
@@ -116,8 +116,8 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        peerState.LastInputTick = world.ServerTick;
-        world.ApplyMovementInput(input.ConnectionId, input.Input);
+        peerState.LastInputTick = room.ServerTick;
+        room.ApplyMovementInput(input.ConnectionId, input.Input);
     }
 
     private void HandleActionCommand(ActionCommandServerEvent command)
@@ -127,16 +127,16 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        peerState.LastInputTick = world.ServerTick;
-        world.ApplyActionCommand(command.ConnectionId, command.Command);
+        peerState.LastInputTick = room.ServerTick;
+        room.ApplyActionCommand(command.ConnectionId, command.Command);
     }
 
     private void HandleTick()
     {
-        world.Update(1f / GameProtocol.SimulationRate);
+        room.Update(1f / GameProtocol.SimulationRate);
 
         var idleConnections = peers
-            .Where(pair => world.ServerTick - pair.Value.LastInputTick > IdleTickLimit)
+            .Where(pair => room.ServerTick - pair.Value.LastInputTick > IdleTickLimit)
             .Select(pair => pair.Key)
             .ToArray();
         foreach (var connectionId in idleConnections)
@@ -154,7 +154,7 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        var payload = GamePacketCodec.EncodeWorldSnapshot(world.CreateSnapshot());
+        var payload = GamePacketCodec.EncodeWorldSnapshot(room.CreateSnapshot());
         var failedConnections = new List<long>();
         foreach (var pair in peers)
         {
@@ -185,10 +185,10 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        var playerId = world.TryGetPlayer(connectionId, out var player)
+        var playerId = room.TryGetPlayer(connectionId, out var player)
             ? player.PlayerId
             : 0;
-        world.Leave(connectionId);
+        room.Leave(connectionId);
         peerState.Peer.Stop();
         stoppedPeers.Add(peerState.Peer);
         Console.WriteLine($"Player {playerId} left connection {connectionId}.");
