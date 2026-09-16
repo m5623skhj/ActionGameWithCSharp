@@ -11,7 +11,7 @@ internal sealed class GameServerCoordinator(
     CancellationToken serverCancellationToken)
 {
     private const long IdleTickLimit = GameProtocol.SimulationRate * 5L;
-    private readonly GameRoom room = new();
+    private readonly GameWorld world = new();
     private readonly Dictionary<long, PeerState> peers = [];
     private readonly List<ClientPeer> stoppedPeers = [];
 
@@ -29,8 +29,11 @@ internal sealed class GameServerCoordinator(
                 HandleActionCommand(command);
                 break;
             case LeaveServerEvent leave:
-                RemovePeer(leave.ConnectionId);
-                BroadcastSnapshot();
+                if (RemovePeer(leave.ConnectionId, out var leftRoomId))
+                {
+                    BroadcastSnapshot(leftRoomId);
+                }
+
                 break;
             case ConnectionLostServerEvent lost:
                 if (lost.Exception is not null)
@@ -39,8 +42,11 @@ internal sealed class GameServerCoordinator(
                         $"Client {lost.ConnectionId} disconnected: {lost.Exception.Message}");
                 }
 
-                RemovePeer(lost.ConnectionId);
-                BroadcastSnapshot();
+                if (RemovePeer(lost.ConnectionId, out var lostRoomId))
+                {
+                    BroadcastSnapshot(lostRoomId);
+                }
+
                 break;
             case TickServerEvent:
                 HandleTick();
@@ -84,13 +90,22 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
-        if (!room.TryJoin(
+        const int roomId = GameWorld.DefaultRoomId;
+        if (!world.TryJoinRoom(
             join.ConnectionId,
+            roomId,
             out var playerId,
-            out var rejectionReason))
+            out var joinFailure))
         {
-            await SendRejectionAsync(join.Sender, rejectionReason).ConfigureAwait(false);
+            await SendRejectionAsync(
+                join.Sender,
+                MapJoinFailure(joinFailure)).ConfigureAwait(false);
             return;
+        }
+
+        if (!world.TryGetRoom(roomId, out var room))
+        {
+            throw new InvalidOperationException("The default room is missing.");
         }
 
         var peer = new ClientPeer(
@@ -99,14 +114,17 @@ internal sealed class GameServerCoordinator(
             eventWriter,
             serverCancellationToken);
         peer.Start();
-        peers.Add(join.ConnectionId, new PeerState(peer, room.ServerTick));
-        Console.WriteLine($"Player {playerId} joined on connection {join.ConnectionId}.");
+        peers.Add(
+            join.ConnectionId,
+            new PeerState(peer, roomId, room.ServerTick));
+        Console.WriteLine(
+            $"Player {playerId} joined room {roomId} on connection {join.ConnectionId}.");
 
         QueueOrRemove(
             join.ConnectionId,
             peer,
             GamePacketCodec.EncodeJoinAccepted(new JoinAcceptedPacket(playerId)));
-        BroadcastSnapshot();
+        BroadcastSnapshot(roomId);
     }
 
     private void HandleMovementInput(MovementInputServerEvent input)
@@ -116,8 +134,13 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
+        if (!world.TryGetRoom(peerState.RoomId, out var room))
+        {
+            return;
+        }
+
         peerState.LastInputTick = room.ServerTick;
-        room.ApplyMovementInput(input.ConnectionId, input.Input);
+        world.ApplyMovementInput(input.ConnectionId, input.Input);
     }
 
     private void HandleActionCommand(ActionCommandServerEvent command)
@@ -127,29 +150,44 @@ internal sealed class GameServerCoordinator(
             return;
         }
 
+        if (!world.TryGetRoom(peerState.RoomId, out var room))
+        {
+            return;
+        }
+
         peerState.LastInputTick = room.ServerTick;
-        room.ApplyActionCommand(command.ConnectionId, command.Command);
+        world.ApplyActionCommand(command.ConnectionId, command.Command);
     }
 
     private void HandleTick()
     {
-        room.Update(1f / GameProtocol.SimulationRate);
+        world.Update(1f / GameProtocol.SimulationRate);
 
         var idleConnections = peers
-            .Where(pair => room.ServerTick - pair.Value.LastInputTick > IdleTickLimit)
+            .Where(pair =>
+                !world.TryGetRoom(pair.Value.RoomId, out var room)
+                || room.ServerTick - pair.Value.LastInputTick > IdleTickLimit)
             .Select(pair => pair.Key)
             .ToArray();
         foreach (var connectionId in idleConnections)
         {
-            RemovePeer(connectionId);
+            RemovePeer(connectionId, out _);
         }
 
-        BroadcastSnapshot();
+        BroadcastSnapshots();
     }
 
-    private void BroadcastSnapshot()
+    private void BroadcastSnapshots()
     {
-        if (peers.Count == 0)
+        foreach (var roomId in world.RoomIds)
+        {
+            BroadcastSnapshot(roomId);
+        }
+    }
+
+    private void BroadcastSnapshot(int roomId)
+    {
+        if (!world.TryGetRoom(roomId, out var room))
         {
             return;
         }
@@ -158,6 +196,11 @@ internal sealed class GameServerCoordinator(
         var failedConnections = new List<long>();
         foreach (var pair in peers)
         {
+            if (pair.Value.RoomId != roomId)
+            {
+                continue;
+            }
+
             if (!pair.Value.Peer.TryQueue(payload))
             {
                 failedConnections.Add(pair.Key);
@@ -166,7 +209,7 @@ internal sealed class GameServerCoordinator(
 
         foreach (var connectionId in failedConnections)
         {
-            RemovePeer(connectionId);
+            RemovePeer(connectionId, out _);
         }
     }
 
@@ -174,24 +217,32 @@ internal sealed class GameServerCoordinator(
     {
         if (!peer.TryQueue(payload))
         {
-            RemovePeer(connectionId);
+            RemovePeer(connectionId, out _);
         }
     }
 
-    private void RemovePeer(long connectionId)
+    private bool RemovePeer(long connectionId, out int roomId)
     {
         if (!peers.Remove(connectionId, out var peerState))
         {
-            return;
+            roomId = 0;
+            return false;
         }
 
-        var playerId = room.TryGetPlayer(connectionId, out var player)
-            ? player.PlayerId
-            : 0;
-        room.Leave(connectionId);
+        roomId = peerState.RoomId;
+        world.Leave(connectionId, out _, out var playerId);
         peerState.Peer.Stop();
         stoppedPeers.Add(peerState.Peer);
-        Console.WriteLine($"Player {playerId} left connection {connectionId}.");
+        Console.WriteLine(
+            $"Player {playerId} left room {roomId} on connection {connectionId}.");
+        return true;
+    }
+
+    private static JoinRejectReason MapJoinFailure(RoomJoinFailure failure)
+    {
+        return failure == RoomJoinFailure.AlreadyJoined
+            ? JoinRejectReason.AlreadyJoined
+            : JoinRejectReason.ServerFull;
     }
 
     private static async ValueTask SendRejectionAsync(
@@ -212,9 +263,14 @@ internal sealed class GameServerCoordinator(
         }
     }
 
-    private sealed class PeerState(ClientPeer peer, long lastInputTick)
+    private sealed class PeerState(
+        ClientPeer peer,
+        int roomId,
+        long lastInputTick)
     {
         public ClientPeer Peer { get; } = peer;
+
+        public int RoomId { get; } = roomId;
 
         public long LastInputTick { get; set; } = lastInputTick;
     }

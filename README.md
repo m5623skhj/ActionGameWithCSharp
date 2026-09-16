@@ -123,15 +123,17 @@ dotnet run --project .\src\ActionGame.Client\ActionGame.Client.csproj -- 127.0.0
 ## 구조와 동시성 경계
 
 - `ActionGame.Contracts`: 게임 패킷 종류, 데이터와 바이너리 코덱
-- `ActionGame.Server`: TCP 호스트, 단일 소유권 게임 룸과 20Hz 시뮬레이션
+- `ActionGame.Server`: TCP 호스트, 게임 월드가 관리하는 게임 룸들과 20Hz 시뮬레이션
 - `ActionGame.Client`: MonoGame 렌더 루프와 지속 연결 네트워크 클라이언트
 - `ActionGame.Tests`: 코덱, 게임 월드와 실제 loopback TCP 통합 테스트
 
-네트워크 핸들러는 게임 룸이나 렌더 상태를 직접 수정하지 않습니다. 서버에서는 bounded
+네트워크 핸들러는 게임 월드·룸이나 렌더 상태를 직접 수정하지 않습니다. 서버에서는 bounded
 이벤트 채널을 통해 단일 시뮬레이션 루프로 전달하고, 클라이언트에서는 MonoGame
 `Update`가 수신 이벤트를 적용합니다. 연결별 송신도 하나의 bounded 큐와 단일 송신
-루프로 직렬화합니다. `GameRoom`은 틱 처리 순서만 조율하고, 플레이어 입장·이동·전투·
-스킬·투사체·부활·스냅숏 처리는 각각의 내부 모듈에 위임합니다.
+루프로 직렬화합니다. `GameWorld`는 여러 `GameRoom`과 연결별 소속 룸을 관리하고,
+`GameRoom`은 틱 처리 순서만 조율합니다. 플레이어 입장·이동·전투·스킬·투사체·부활·
+스냅숏 처리는 각각의 내부 모듈에 위임합니다. 룸 목록과 선택 프로토콜을 추가하기 전까지
+클라이언트는 기본 룸에 자동 입장합니다.
 
 ## 2.5D 좌표계
 
